@@ -671,6 +671,40 @@ button {
   color: #1e293b;
 }
 
+.selected-files-list {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  margin: -6px 0 16px;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.selected-files-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e5ebf2;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 0.84rem;
+}
+
+.selected-files-list span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.selected-files-list span:last-child {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-weight: 800;
+}
+
 .primary-action {
   width: 100%;
   margin-bottom: 14px;

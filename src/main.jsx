@@ -84,14 +84,14 @@ const APP_TEXT = {
     searchResources: 'Search resources',
     resizeFormAndFiles: 'Resize form and files',
     searching: 'Searching...',
-    selectedFile: 'Selected file',
+    selectedFile: 'Selected files',
     shaclFormFile: 'SHACL form file',
     tabSearch: 'Search',
     tabUpload: 'Hochladen',
     tabView: 'View',
     testEnvironment: 'Test environment',
     tokenNotUsedPlaceholder: 'Token not used in test mode',
-    uploadFile: 'Upload file to Coscine',
+    uploadFile: 'Upload files to Coscine',
     uploading: 'Uploading...',
     useMemoryCheckbox: 'Use the checkbox on a metadata field to remember its value in this browser.',
   },
@@ -131,14 +131,14 @@ const APP_TEXT = {
     searchResources: 'Ressourcen suchen',
     resizeFormAndFiles: 'Formular und Dateien skalieren',
     searching: 'Suche...',
-    selectedFile: 'Ausgewaehlte Datei',
+    selectedFile: 'Ausgewaehlte Dateien',
     shaclFormFile: 'SHACL-Formulardatei',
     tabSearch: 'Suche',
     tabUpload: 'Upload',
     tabView: 'Ansicht',
     testEnvironment: 'Testumgebung',
     tokenNotUsedPlaceholder: 'Token wird im Testmodus nicht verwendet',
-    uploadFile: 'Datei nach Coscine hochladen',
+    uploadFile: 'Dateien nach Coscine hochladen',
     uploading: 'Wird hochgeladen...',
     useMemoryCheckbox: 'Nutze die Checkbox am Metadatenfeld, um den Wert in diesem Browser zu merken.',
   },
@@ -165,7 +165,7 @@ function App() {
   const [resources, setResources] = useState([]);
   const [selectedKey, setSelectedKey] = useState('');
   const [profile, setProfile] = useState(null);
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [targetPath, setTargetPath] = useState('');
   const [metadataContent, setMetadataContent] = useState('');
   const [metadataValid, setMetadataValid] = useState(false);
@@ -220,7 +220,7 @@ function App() {
     setSearchFilterRdf('');
     setSearchRangeFilters({});
     setProfile(null);
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setTargetPath('');
     setMetadataContent('');
     setMetadataValid(false);
@@ -441,18 +441,30 @@ function App() {
         metadataContent: serializedMetadata,
         profile,
       });
-      setStatus(`Uploading selected file and metadata to ${coscineService.label}...`);
+      const filesToUpload = selectedFiles;
 
-      await coscineService.uploadFile({
-        apiToken,
-        projectId: selectedResource?.projectId,
-        resourceId: selectedResource?.resourceId,
-        file: selectedFile,
-        fileName: targetPath || selectedFile?.name,
-        metadataContent: serializedMetadata,
-        profile,
-      });
-      setStatus(`Uploaded ${targetPath || selectedFile.name} to ${coscineService.label}.`);
+      if (!filesToUpload.length) {
+        throw new Error('Choose at least one file to upload.');
+      }
+
+      setStatus(`Uploading ${filesToUpload.length} file${filesToUpload.length === 1 ? '' : 's'} and metadata to ${coscineService.label}...`);
+
+      for (const [index, file] of filesToUpload.entries()) {
+        const fileName = getUploadTargetPath(file, targetPath, filesToUpload.length);
+        setStatus(`Uploading ${index + 1} of ${filesToUpload.length}: ${fileName}...`);
+
+        await coscineService.uploadFile({
+          apiToken,
+          projectId: selectedResource?.projectId,
+          resourceId: selectedResource?.resourceId,
+          file,
+          fileName,
+          metadataContent: serializedMetadata,
+          profile,
+        });
+      }
+
+      setStatus(`Uploaded ${filesToUpload.length} file${filesToUpload.length === 1 ? '' : 's'} to ${coscineService.label}.`);
       await refreshTestViewData();
     } catch (uploadError) {
       setError(uploadError.message || 'Could not upload to Coscine.');
@@ -591,7 +603,7 @@ function App() {
       if (selectedKey === resourceKey(resource)) {
         setSelectedKey('');
         setProfile(null);
-        setSelectedFile(null);
+        setSelectedFiles([]);
         setTargetPath('');
         setMetadataContent('');
         setMetadataValid(false);
@@ -902,11 +914,12 @@ function App() {
                 resource={selectedResource}
                 selectedLanguage={selectedLanguage}
                 serviceLabel={coscineService.label}
-                selectedFile={selectedFile}
+                selectedFiles={selectedFiles}
                 targetPath={targetPath}
-                onFileChange={(file) => {
-                  setSelectedFile(file);
-                  setTargetPath(file?.name || '');
+                uploadButtonLabel={isTestEnvironment ? 'Upload files to virtual Coscine' : text.uploadFile}
+                onFilesChange={(files) => {
+                  setSelectedFiles(files);
+                  setTargetPath(files.length === 1 ? files[0].name : '');
                 }}
                 onMetadataChange={setMetadataContent}
                 onMetadataValidChange={setMetadataValid}
@@ -2663,7 +2676,7 @@ function UploadWorkspace({
   metadataFormRef,
   metadataValid,
   metadataValidationSummary,
-  onFileChange,
+  onFilesChange,
   onMetadataChange,
   onMetadataValidChange,
   onMetadataValidationSummaryChange,
@@ -2676,11 +2689,13 @@ function UploadWorkspace({
   resource,
   selectedLanguage,
   serviceLabel,
-  selectedFile,
+  selectedFiles,
   targetPath,
+  uploadButtonLabel,
 }) {
   const text = useAppText();
-  const canUpload = Boolean(profile?.shapes && selectedFile && targetPath.trim() && metadataValid);
+  const canUpload = Boolean(profile?.shapes && selectedFiles.length && metadataValid);
+  const selectedFilesLabel = formatSelectedFilesLabel(selectedFiles);
   const formMemoryContextKey = getFormMemoryContextKey(profile, resource);
   const rememberedMetadataContent = useMemo(
     () => buildRememberedMetadataContent(formMemoryContextKey, profile),
@@ -2805,20 +2820,24 @@ function UploadWorkspace({
           <div className="panel-title">
             <div>
               <h3>{text.selectedFile}</h3>
-              <p>The chosen file is uploaded through {serviceLabel}.</p>
+              <p>The chosen files are uploaded through {serviceLabel}.</p>
             </div>
           </div>
 
           <label className="field-label">
             {text.file}
-            <input type="file" onChange={(event) => onFileChange(event.target.files?.[0] ?? null)} />
+            <input
+              type="file"
+              multiple
+              onChange={(event) => onFilesChange(Array.from(event.target.files ?? []))}
+            />
           </label>
 
           <label className="field-label">
             {text.coscinePath}
             <input
               value={targetPath}
-              placeholder="folder/name.ext"
+              placeholder={selectedFiles.length > 1 ? 'folder/' : 'folder/name.ext'}
               onChange={(event) => onTargetPathChange(event.target.value)}
             />
           </label>
@@ -2826,12 +2845,22 @@ function UploadWorkspace({
           <dl className="upload-facts">
             <div>
               <dt>{text.selectedFile}</dt>
-              <dd>{selectedFile?.name || 'None'}</dd>
+              <dd>{selectedFilesLabel}</dd>
             </div>
           </dl>
+          {selectedFiles.length > 1 ? (
+            <ul className="selected-files-list">
+              {selectedFiles.map((file) => (
+                <li key={`${file.name}-${file.size}-${file.lastModified}`}>
+                  <span>{file.name}</span>
+                  <span>{formatBytes(file.size)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
           <button className="primary-action" type="button" disabled={!canUpload || isUploading} onClick={onUpload}>
-            {isUploading ? text.uploading : text.uploadFile}
+            {isUploading ? text.uploading : uploadButtonLabel}
           </button>
         </section>
       </div>
@@ -4459,6 +4488,32 @@ function resourceKey(resource) {
 
 function resourceNameFromFileName(fileName) {
   return String(fileName ?? '').replace(/_+/g, ' ').trim();
+}
+
+function getUploadTargetPath(file, targetPath, fileCount) {
+  const normalizedTargetPath = String(targetPath ?? '').trim().replace(/^\/+/, '');
+
+  if (fileCount === 1) {
+    return normalizedTargetPath || file.name;
+  }
+
+  if (!normalizedTargetPath) {
+    return file.name;
+  }
+
+  return `${normalizedTargetPath.replace(/\/+$/, '')}/${file.name}`;
+}
+
+function formatSelectedFilesLabel(files) {
+  if (!files.length) {
+    return 'None';
+  }
+
+  if (files.length === 1) {
+    return files[0].name;
+  }
+
+  return `${files.length} files selected`;
 }
 
 function formatBytes(bytes) {
