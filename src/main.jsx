@@ -2452,6 +2452,7 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
       .map((item) => item.subject);
     const seenPaths = new Set();
     const fields = [];
+    const metadataPaths = Array.from(observedMetadataValues.keys());
 
     for (const propertyShape of propertyShapes) {
       const path = getFirstQuadObjectValue(quads, propertyShape, SH_PATH);
@@ -2515,6 +2516,18 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
         continue;
       }
 
+      if (observedValues.length === 1) {
+        fields.push({
+          description,
+          displayValue: compactMetadataUri(observedValues[0]),
+          id,
+          kind: 'readonly',
+          label,
+          path,
+        });
+        continue;
+      }
+
       fields.push({
         description,
         id,
@@ -2525,10 +2538,29 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
       });
     }
 
-    return fields;
+    return fields.sort((left, right) => {
+      const leftOrder = findObservedMetadataPathOrder(metadataPaths, left.path);
+      const rightOrder = findObservedMetadataPathOrder(metadataPaths, right.path);
+      return leftOrder - rightOrder;
+    });
   } catch (error) {
     return [];
   }
+}
+
+function findObservedMetadataPathOrder(metadataPaths, fieldPath) {
+  const directIndex = metadataPaths.indexOf(fieldPath);
+
+  if (directIndex >= 0) {
+    return directIndex;
+  }
+
+  const normalizedFieldPath = normalizeRangePath(fieldPath);
+  const matchingPaths = metadataPaths.filter(
+    (metadataPath) => normalizeRangePath(metadataPath) === normalizedFieldPath,
+  );
+
+  return matchingPaths.length === 1 ? metadataPaths.indexOf(matchingPaths[0]) : Number.MAX_SAFE_INTEGER;
 }
 
 function findObservedMetadataValues(observedMetadataValues, fieldPath) {
