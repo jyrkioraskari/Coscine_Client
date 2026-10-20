@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { proxyRdfResource } from './rdfProxy.js';
 import { extname, join, normalize, resolve } from 'node:path';
 
 const port = Number(process.env.PORT) || 4173;
@@ -119,6 +120,11 @@ async function serveStatic(request, response) {
 
 const server = createServer(async (request, response) => {
   try {
+    if (request.url.startsWith('/rdf-resource')) {
+      await proxyRdfResource(request, response);
+      return;
+    }
+
     if (request.url.startsWith('/coscine-api')) {
       await proxyCoscine(request, response);
       return;

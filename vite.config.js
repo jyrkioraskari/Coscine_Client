@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { proxyRdfResource } from './rdfProxy.js';
 
 const coscineApiOrigin = 'https://coscine.rwth-aachen.de';
 
@@ -74,6 +75,11 @@ export default defineConfig({
       name: 'coscine-api-proxy',
       configureServer(server) {
         server.middlewares.use(async (request, response, next) => {
+          if (request.url?.startsWith('/rdf-resource')) {
+            await proxyRdfResource(request, response);
+            return;
+          }
+
           if (!request.url?.startsWith('/coscine-api')) {
             next();
             return;
