@@ -607,10 +607,6 @@ button {
   font-size: 0.9rem;
 }
 
-.shacl-file-line {
-  margin-top: -8px;
-}
-
 .workspace-split {
   display: grid;
   grid-template-columns: minmax(380px, 1fr) minmax(300px, 380px);
@@ -710,10 +706,10 @@ button {
 
 .memory-panel {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-top: 16px;
   border: 1px solid #d8e0ea;
   border-radius: 8px;
   padding: 12px;
@@ -726,16 +722,17 @@ button {
   font-size: 0.82rem;
 }
 
-.memory-clear-button {
-  min-height: 34px;
+.memory-panel > input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
-  border: 1px solid #c7d4e2;
-  border-radius: 6px;
-  padding: 6px 10px;
-  color: #35516f;
-  background: #ffffff;
-  font-size: 0.82rem;
-  font-weight: 750;
+  margin: 0;
+  accent-color: #245f94;
+  cursor: pointer;
+}
+
+.memory-panel > input[type='checkbox']:disabled {
+  cursor: wait;
 }
 
 .panel-title {

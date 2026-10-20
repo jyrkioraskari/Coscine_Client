@@ -55,7 +55,6 @@ const APP_TEXT = {
     apiTokenPlaceholder: 'Coscine API token',
     browserMemory: 'Browser memory',
     clear: 'Clear',
-    clearSavedValues: 'Clear saved values',
     coscinePath: 'Coscine path',
     loadResources: 'Login with API Token',
     loading: 'Loading...',
@@ -63,6 +62,7 @@ const APP_TEXT = {
     logOut: 'Log out',
     mainViews: 'Main views',
     metadataForm: 'Search form',
+    noFilesYet: 'No files yet.',
     ready: 'Ready',
     rememberLogin: 'Keep me logged in on this device',
     delete: 'Delete',
@@ -83,14 +83,13 @@ const APP_TEXT = {
     tabUpload: 'Upload',
     uploadFile: 'Upload files to Coscine',
     uploading: 'Uploading...',
-    useMemoryCheckbox: 'Use the checkbox on a metadata field to remember its value in this browser.',
+    useMemoryCheckbox: 'Remember all metadata values in this browser for the next upload.',
   },
   de: {
     aims: 'AIMS',
     apiTokenPlaceholder: 'Coscine-API-Token',
     browserMemory: 'Browser-Speicher',
     clear: 'Leeren',
-    clearSavedValues: 'Gespeicherte Werte loeschen',
     coscinePath: 'Coscine-Pfad',
     loadResources: 'Mit API-Token anmelden',
     loading: 'Wird geladen...',
@@ -98,6 +97,7 @@ const APP_TEXT = {
     logOut: 'Abmelden',
     mainViews: 'Hauptansichten',
     metadataForm: 'Suchformular',
+    noFilesYet: 'Noch keine Dateien.',
     ready: 'Bereit',
     rememberLogin: 'Auf diesem Geraet angemeldet bleiben',
     delete: 'Loeschen',
@@ -118,7 +118,7 @@ const APP_TEXT = {
     tabUpload: 'Hochladen',
     uploadFile: 'Dateien nach Coscine hochladen',
     uploading: 'Wird hochgeladen...',
-    useMemoryCheckbox: 'Nutze die Checkbox am Metadatenfeld, um den Wert in diesem Browser zu merken.',
+    useMemoryCheckbox: 'Alle Metadatenwerte in diesem Browser fuer den naechsten Upload speichern.',
   },
 };
 const AppTextContext = createContext(APP_TEXT.en);
@@ -560,7 +560,7 @@ function App() {
                       {project.resources.map((resource) => (
                         <option key={resourceKey(resource)} value={resourceKey(resource)}>
                           {getResourceDisplayName(resource)}
-                          {resource.resourceType ? ` (${resource.resourceType})` : ''}
+                          {getResourceTypeDisplayName(resource) ? ` (${getResourceTypeDisplayName(resource)})` : ''}
                         </option>
                       ))}
                     </optgroup>
@@ -600,6 +600,7 @@ function App() {
                 onRememberedFieldsChange={setFormMemoryFields}
                 onTargetPathChange={setTargetPath}
                 onUpload={uploadToCoscine}
+                formMemoryFields={formMemoryFields}
                 rememberedFieldPaths={rememberedFieldPaths}
               />
             ) : (
@@ -699,7 +700,7 @@ function SearchView({
                     {project.resources.map((resource) => (
                       <option key={resourceKey(resource)} value={resourceKey(resource)}>
                         {getResourceDisplayName(resource)}
-                        {resource.resourceType ? ` (${resource.resourceType})` : ''}
+                        {getResourceTypeDisplayName(resource) ? ` (${getResourceTypeDisplayName(resource)})` : ''}
                       </option>
                     ))}
                   </optgroup>
@@ -747,6 +748,7 @@ function SearchResourceWorkspace({
   selectedLanguage,
   service,
 }) {
+  const text = useAppText();
   const [selectedFilePath, setSelectedFilePath] = useState('');
   const [formWidth, setFormWidth] = useState(58);
   const [filterResetVersion, setFilterResetVersion] = useState(0);
@@ -769,65 +771,68 @@ function SearchResourceWorkspace({
     <>
       <div className="detail-header">
         <div>
-          <p className="eyebrow">{resource.projectName}</p>
+          <p className="eyebrow">{getProjectDisplayName(resource)}</p>
           <h2>{getResourceDisplayName(resource)}</h2>
         </div>
-        <span>{rawFiles.length} files</span>
       </div>
 
-      {resource.resourceType ? (
+      {getResourceTypeDisplayName(resource) ? (
         <div className="metadata-line">
-          <span>{resource.resourceType}</span>
+          <span>{getResourceTypeDisplayName(resource)}</span>
         </div>
       ) : null}
 
-      <div
-        className="search-workspace-split"
-        style={{
-          '--form-width': `${formWidth}%`,
-          '--files-width': `${100 - formWidth}%`,
-        }}
-      >
-        <MetadataFilterForm
-          isLoading={isLoading}
-          onRangeFiltersChange={onRangeFiltersChange}
-          profile={profile}
-          rawFiles={rawFiles}
-          resetVersion={filterResetVersion}
-          resource={resource}
-          selectedLanguage={selectedLanguage}
-          onFilterRdfChange={onFilterRdfChange}
-          onClear={() => {
-            onFilterRdfChange('');
-            onRangeFiltersChange({});
-            setFilterResetVersion((currentVersion) => currentVersion + 1);
+      {!isLoading && !rawFiles.length ? (
+        <div className="empty-state">{text.noFilesYet}</div>
+      ) : (
+        <div
+          className="search-workspace-split"
+          style={{
+            '--form-width': `${formWidth}%`,
+            '--files-width': `${100 - formWidth}%`,
           }}
-        />
-        <ResizeHandle
-          onResize={(delta) => {
-            setFormWidth((currentWidth) => Math.min(78, Math.max(42, currentWidth + delta)));
-          }}
-        />
-        <div className="search-files-column">
-          <FileTable
-            apiToken={apiToken}
-            files={files}
+        >
+          <MetadataFilterForm
             isLoading={isLoading}
-            resource={resource}
-            selectedFilePath={selectedFilePath}
-            service={service}
-            onSelectFile={(file) => setSelectedFilePath(searchFilePath(file))}
-          />
-          <FilePreview
-            apiToken={apiToken}
-            file={selectedFile}
+            onRangeFiltersChange={onRangeFiltersChange}
             profile={profile}
+            rawFiles={rawFiles}
+            resetVersion={filterResetVersion}
             resource={resource}
             selectedLanguage={selectedLanguage}
-            service={service}
+            onFilterRdfChange={onFilterRdfChange}
+            onClear={() => {
+              onFilterRdfChange('');
+              onRangeFiltersChange({});
+              setFilterResetVersion((currentVersion) => currentVersion + 1);
+            }}
           />
+          <ResizeHandle
+            onResize={(delta) => {
+              setFormWidth((currentWidth) => Math.min(78, Math.max(42, currentWidth + delta)));
+            }}
+          />
+          <div className="search-files-column">
+            <FileTable
+              apiToken={apiToken}
+              files={files}
+              isLoading={isLoading}
+              resource={resource}
+              selectedFilePath={selectedFilePath}
+              service={service}
+              onSelectFile={(file) => setSelectedFilePath(searchFilePath(file))}
+            />
+            <FilePreview
+              apiToken={apiToken}
+              file={selectedFile}
+              profile={profile}
+              resource={resource}
+              selectedLanguage={selectedLanguage}
+              service={service}
+            />
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }
@@ -1025,7 +1030,7 @@ function FileTable({ apiToken, files, isLoading, onSelectFile, resource, selecte
     <section className="files-panel">
       <div className="panel-title">
         <h3>{text.files}</h3>
-        {isLoading ? <span>{text.loading}</span> : <span>{files.length}</span>}
+        {isLoading ? <span>{text.loading}</span> : null}
       </div>
 
       <div className="table-wrap">
@@ -3241,7 +3246,7 @@ function TestEnvironmentView({ isEnabled, onDeleteResource, onDeleteUpload, onRe
                     onClick={() => setSelectedViewResourceKey(resourceKey(resource))}
                   >
                     <strong>{getResourceDisplayName(resource)}</strong>
-                    <span>{resource.resourceType || 'Resource'}</span>
+                    <span>{getResourceTypeDisplayName(resource) || 'Resource'}</span>
                     <small>{resource.shaclFileName ? `SHACL file: ${resource.shaclFileName}` : 'Created resource'}</small>
                   </button>
                   <button
@@ -3322,11 +3327,11 @@ function SelectedResourceDetails({ resource }) {
         </div>
         <div>
           <dt>Project</dt>
-          <dd>{resource.projectName || resource.projectId}</dd>
+          <dd>{getProjectDisplayName(resource)}</dd>
         </div>
         <div>
           <dt>Type</dt>
-          <dd>{resource.resourceType || 'Resource'}</dd>
+          <dd>{getResourceTypeDisplayName(resource) || 'Resource'}</dd>
         </div>
         <div>
           <dt>SHACL file</dt>
@@ -3352,7 +3357,7 @@ function SelectedUploadDetails({ file }) {
         </div>
         <div>
           <dt>Project</dt>
-          <dd>{file.projectName || file.projectId}</dd>
+          <dd>{getProjectDisplayName(file)}</dd>
         </div>
         <div>
           <dt>Uploaded</dt>
@@ -3372,6 +3377,7 @@ function SelectedUploadDetails({ file }) {
 }
 
 function UploadWorkspace({
+  formMemoryFields,
   isLoadingProfile,
   isUploading,
   metadataFormRef,
@@ -3400,13 +3406,15 @@ function UploadWorkspace({
   const formMemoryContextKey = getFormMemoryContextKey(profile, resource);
   const rememberedMetadataContent = useMemo(
     () => buildRememberedMetadataContent(formMemoryContextKey, profile),
-    [formMemoryContextKey, profile],
+    [formMemoryContextKey, profile, rememberedFieldPaths],
   );
   const rememberedValuesSubject = useMemo(
     () => getRememberedValuesSubject(formMemoryContextKey),
     [formMemoryContextKey],
   );
   const rememberedFieldPathsRef = useRef(rememberedFieldPaths);
+  const memoryEnabledRef = useRef(Boolean(rememberedFieldPaths.length));
+  const [memoryResetVersion, setMemoryResetVersion] = useState(0);
 
   useEffect(() => {
     onRememberedFieldPathsChange(readRememberedFieldSelection(formMemoryContextKey, profile));
@@ -3415,6 +3423,7 @@ function UploadWorkspace({
 
   useEffect(() => {
     rememberedFieldPathsRef.current = rememberedFieldPaths;
+    memoryEnabledRef.current = Boolean(rememberedFieldPaths.length);
   }, [rememberedFieldPaths]);
 
   const persistRememberedFieldValues = useCallback((metadataContentToSave, fields, fieldPaths) => {
@@ -3427,47 +3436,63 @@ function UploadWorkspace({
     });
   }, [formMemoryContextKey, profile]);
 
-  const toggleRememberedField = useCallback((path) => {
-    const nextPaths = new Set(rememberedFieldPathsRef.current);
+  const handleFieldsDetected = useCallback((fields) => {
+    onRememberedFieldsChange(fields);
 
-    if (nextPaths.has(path)) {
-      nextPaths.delete(path);
-    } else {
-      nextPaths.add(path);
+    if (!memoryEnabledRef.current) {
+      return;
     }
 
-    const nextSelection = Array.from(nextPaths);
-    writeRememberedFieldSelection(formMemoryContextKey, nextSelection);
-    rememberedFieldPathsRef.current = nextSelection;
-    onRememberedFieldPathsChange(nextSelection);
-    return nextSelection;
-  }, [formMemoryContextKey, onRememberedFieldPathsChange]);
+    const allFieldPaths = fields.map((field) => field.path);
+    writeRememberedFieldSelection(formMemoryContextKey, allFieldPaths);
+    rememberedFieldPathsRef.current = allFieldPaths;
+    onRememberedFieldPathsChange(allFieldPaths);
+  }, [formMemoryContextKey, onRememberedFieldPathsChange, onRememberedFieldsChange]);
+
+  const setBrowserMemoryEnabled = useCallback((enabled) => {
+    if (!enabled) {
+      clearRememberedFormFields(formMemoryContextKey, profile);
+      memoryEnabledRef.current = false;
+      rememberedFieldPathsRef.current = [];
+      onRememberedFieldPathsChange([]);
+      setMemoryResetVersion((version) => version + 1);
+      return;
+    }
+
+    const allFieldPaths = formMemoryFields.map((field) => field.path);
+    memoryEnabledRef.current = true;
+    rememberedFieldPathsRef.current = allFieldPaths;
+    writeRememberedFieldSelection(formMemoryContextKey, allFieldPaths);
+
+    const serializedMetadata = metadataFormRef.current?.serialize?.() ?? '';
+    persistRememberedFieldValues(serializedMetadata, formMemoryFields, allFieldPaths);
+    onRememberedFieldPathsChange(allFieldPaths);
+  }, [
+    formMemoryContextKey,
+    formMemoryFields,
+    metadataFormRef,
+    onRememberedFieldPathsChange,
+    persistRememberedFieldValues,
+    profile,
+  ]);
+
+  const isBrowserMemoryEnabled = rememberedFieldPaths.length > 0;
 
   return (
     <>
       <div className="detail-header">
         <div>
-          <p className="eyebrow">{resource.projectName}</p>
+          <p className="eyebrow">{getProjectDisplayName(resource)}</p>
           <h2>{getResourceDisplayName(resource)}</h2>
         </div>
-        <span>{resource.resourceType || 'Resource'}</span>
+        <span>{getResourceTypeDisplayName(resource) || 'Resource'}</span>
       </div>
-
-      <div className="metadata-line">
-        <span>{resource.applicationProfileUri || 'No application profile URI'}</span>
-      </div>
-      {resource.shaclFileName ? (
-        <div className="metadata-line shacl-file-line">
-          <span>SHACL file: {resource.shaclFileName}</span>
-        </div>
-      ) : null}
 
       <div className="workspace-split">
         <section className="form-panel">
           <div className="panel-title">
             <div>
               <h3>{text.requiredMetadata}</h3>
-              <p>{profile?.baseUri || 'Load the selected resource form.'}</p>
             </div>
             <span>{metadataValid ? text.ready : text.pending}</span>
           </div>
@@ -3480,39 +3505,33 @@ function UploadWorkspace({
           {isLoadingProfile ? <p className="muted">{text.loadingShaclForm}</p> : null}
           {!isLoadingProfile && profile?.shapes ? (
             <>
-              <div className="memory-panel">
-                <div>
-                  <h3>{text.browserMemory}</h3>
-                  <p>{text.useMemoryCheckbox}</p>
-                </div>
-                {formMemoryContextKey && rememberedFieldPaths.length ? (
-                  <button
-                    className="memory-clear-button"
-                    type="button"
-                    onClick={() => {
-                      clearRememberedFormFields(formMemoryContextKey);
-                      onRememberedFieldPathsChange([]);
-                    }}
-                  >
-                    {text.clearSavedValues}
-                  </button>
-                ) : null}
-              </div>
               <ShaclFormHost
-                formKey={`${resource.projectId}:${resource.resourceId}:${profile.baseUri}:${rememberedMetadataContent}`}
+                formKey={`${resource.projectId}:${resource.resourceId}:${profile.baseUri}:${rememberedMetadataContent}:${memoryResetVersion}`}
                 formElementRef={metadataFormRef}
                 rememberedMetadataContent={rememberedMetadataContent}
                 rememberedFieldPaths={rememberedFieldPaths}
                 selectedLanguage={selectedLanguage}
                 rememberedValuesSubject={rememberedValuesSubject}
                 shapes={profile.shapes}
-                onFieldsDetected={onRememberedFieldsChange}
+                onFieldsDetected={handleFieldsDetected}
                 onMetadataChange={onMetadataChange}
                 onMetadataValidChange={onMetadataValidChange}
                 onMetadataValidationSummaryChange={onMetadataValidationSummaryChange}
-                onRememberedFieldToggle={toggleRememberedField}
                 onRememberedValuesChange={persistRememberedFieldValues}
               />
+              <div className="memory-panel">
+                <div>
+                  <h3>{text.browserMemory}</h3>
+                  <p>{text.useMemoryCheckbox}</p>
+                </div>
+                <input
+                  aria-label={text.browserMemory}
+                  checked={isBrowserMemoryEnabled}
+                  disabled={!formMemoryFields.length}
+                  type="checkbox"
+                  onChange={(event) => setBrowserMemoryEnabled(event.target.checked)}
+                />
+              </div>
             </>
           ) : null}
         </section>
@@ -3576,7 +3595,6 @@ function ShaclFormHost({
   onMetadataChange,
   onMetadataValidChange,
   onMetadataValidationSummaryChange,
-  onRememberedFieldToggle,
   onRememberedValuesChange,
   rememberedMetadataContent,
   rememberedFieldPaths,
@@ -3587,12 +3605,12 @@ function ShaclFormHost({
   const hostRef = useRef(null);
   const fieldsRef = useRef([]);
   const rememberedFieldPathsRef = useRef(rememberedFieldPaths);
-  const rememberedFieldPathSet = useMemo(() => new Set(rememberedFieldPaths), [rememberedFieldPaths]);
   const sanitizedShapes = useMemo(
     () => sanitizeShapesForForm(removeUploadTechnicalProperties(shapes), true),
     [shapes],
   );
   const rootShapeSubject = useMemo(() => findRootShapeSubject(sanitizedShapes), [sanitizedShapes]);
+  const targetClassUrls = useMemo(() => collectShapeTargetClasses(sanitizedShapes), [sanitizedShapes]);
   const descriptionsByPath = useMemo(
     () => collectShapeDescriptionsByPath(sanitizedShapes, selectedLanguage),
     [sanitizedShapes, selectedLanguage],
@@ -3617,7 +3635,12 @@ function ShaclFormHost({
 
     const formElement = document.createElement('shacl-form');
     formElement.setRdfUrlResolver?.(fetchExternalMetadataRdf);
-    formElement.setClassInstanceProvider?.(fetchExternalClassInstances);
+    formElement.setClassInstanceProvider?.((classes) => {
+      const classUrls = typeof classes === 'string' ? [classes] : Array.from(classes ?? []);
+      return fetchExternalClassInstances(
+        classUrls.filter((classUrl) => !targetClassUrls.has(classUrl)),
+      );
+    });
     const validateMetadataForSubmission = formElement.validate.bind(formElement);
     formElement.validate = (ignoreEmptyValues = false) => {
       if (ignoreEmptyValues) {
@@ -3690,12 +3713,6 @@ function ShaclFormHost({
       const fields = detectMemoryFields(formElement);
       fieldsRef.current = fields;
       onFieldsDetected(fields);
-      decorateMemoryFields(
-        formElement,
-        new Set(rememberedFieldPathsRef.current),
-        onRememberedFieldToggle,
-        saveCurrentRememberedValues,
-      );
       attachFieldDescriptionTooltips(formElement, descriptionsByPath);
       saveCurrentRememberedValues();
       onMetadataValidChange(false);
@@ -3778,7 +3795,6 @@ function ShaclFormHost({
     onMetadataChange,
     onMetadataValidChange,
     onMetadataValidationSummaryChange,
-    onRememberedFieldToggle,
     onRememberedValuesChange,
     rememberedMetadataContent,
     rememberedValuesSubject,
@@ -3786,19 +3802,8 @@ function ShaclFormHost({
     rootShapeSubject,
     selectedLanguage,
     sanitizedShapes,
+    targetClassUrls,
   ]);
-
-  useEffect(() => {
-    const formElement = formElementRef.current;
-
-    if (!formElement) {
-      return;
-    }
-
-    for (const input of getFormRoot(formElement).querySelectorAll('[data-memory-control]')) {
-      input.checked = rememberedFieldPathSet.has(input.dataset.memoryPath);
-    }
-  }, [formElementRef, rememberedFieldPathSet]);
 
   return <div className="shacl-form-host" ref={hostRef} />;
 }
@@ -3930,6 +3935,26 @@ function findRootShapeSubject(shapes) {
   }
 }
 
+function collectShapeTargetClasses(shapes) {
+  if (!shapes || typeof shapes !== 'string') {
+    return new Set();
+  }
+
+  try {
+    return new Set(
+      new Parser({ format: 'text/turtle' })
+        .parse(shapes)
+        .filter(
+          (item) =>
+            item.predicate.value === SH_TARGET_CLASS && item.object.termType === 'NamedNode',
+        )
+        .map((item) => item.object.value),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 function collectShapeDescriptionsByPath(shapes, preferredLanguage = 'en') {
   const descriptionsByPath = new Map();
 
@@ -4045,58 +4070,6 @@ function detectMemoryFields(formElement) {
   }
 
   return Array.from(fieldsByPath.values()).sort((left, right) => left.label.localeCompare(right.label));
-}
-
-function decorateMemoryFields(formElement, rememberedFieldPathSet, onRememberedFieldToggle, onRememberedValuesSave) {
-  const root = getFormRoot(formElement);
-  const decoratedPaths = new Set();
-
-  for (const editor of root.querySelectorAll('.editor, input, select, textarea')) {
-    if (editor.type === 'file' || editor.dataset.memoryControl === 'true') {
-      continue;
-    }
-
-    const element = editor.closest('[data-path]');
-    const path = element?.dataset.path;
-
-    if (!element || !path || decoratedPaths.has(path)) {
-      continue;
-    }
-
-    decoratedPaths.add(path);
-    element.classList.add('memory-has-inline-control');
-
-    const existingControl = Array.from(element.children).find(
-      (child) => child.classList?.contains('memory-inline-control') && child.dataset.memoryPath === path,
-    );
-
-    if (existingControl) {
-      const existingCheckbox = existingControl.querySelector('input[data-memory-control]');
-      if (existingCheckbox) {
-        existingCheckbox.checked = rememberedFieldPathSet.has(path);
-      }
-      continue;
-    }
-
-    const control = document.createElement('label');
-    control.className = 'memory-inline-control';
-    control.dataset.memoryPath = path;
-    control.title = 'Remember this field value in this browser after upload';
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = rememberedFieldPathSet.has(path);
-    checkbox.dataset.memoryControl = 'true';
-    checkbox.dataset.memoryPath = path;
-    checkbox.addEventListener('change', (event) => {
-      event.stopPropagation();
-      const nextSelection = onRememberedFieldToggle(path);
-      onRememberedValuesSave(nextSelection);
-    });
-
-    control.append(checkbox);
-    element.insertBefore(control, element.firstChild);
-  }
 }
 
 function getFormRoot(formElement) {
@@ -4723,13 +4696,19 @@ function buildRememberedMetadataContent(contextKey, profile) {
   }
 }
 
-function clearRememberedFormFields(contextKey) {
+function clearRememberedFormFields(contextKey, profile) {
   if (!contextKey) {
     return;
   }
 
   const store = readFormMemoryStore();
-  delete store[contextKey];
+  store[contextKey] = {
+    fields: {},
+    rememberedMetadataContent: '',
+    profileBaseUri: profile?.baseUri || '',
+    selectedPaths: [],
+    updatedAt: new Date().toISOString(),
+  };
   writeFormMemoryStore(store);
 }
 
@@ -5017,47 +4996,6 @@ function hideShaclFormSubmitButton(formElement) {
         position: relative !important;
       }
 
-      .memory-inline-control {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        max-width: 100%;
-        margin: 0 0 2px;
-        border: 0;
-        border-radius: 3px;
-        padding: 0;
-        color: #35516f;
-        background: transparent;
-      }
-
-      .memory-has-inline-control {
-        display: grid !important;
-        grid-template-columns: minmax(0, 7%) minmax(0, 1fr);
-        column-gap: 6px;
-        align-items: start;
-      }
-
-      .memory-has-inline-control > :not(.memory-inline-control) {
-        grid-column: 2;
-        min-width: 0;
-      }
-
-      .memory-has-inline-control > .memory-inline-control {
-        grid-column: 1;
-        justify-self: start;
-      }
-
-      .memory-inline-control:has(input:checked) {
-        background: #eef7ff;
-      }
-
-      .memory-inline-control input {
-        width: 14px;
-        min-height: 14px;
-        margin: 0;
-      }
     `;
   };
 
@@ -5224,7 +5162,7 @@ function groupResourcesByProject(resources) {
     const id = resource.projectId;
     const currentProject = projects.get(id) ?? {
       id,
-      name: resource.projectName || id,
+      name: getProjectDisplayName(resource),
       resources: [],
     };
 
@@ -5244,9 +5182,27 @@ function getResourceDisplayName(resource) {
   const resourceId = String(resource.resourceId ?? '').trim();
   return resourceName &&
     resourceName !== resourceId &&
-    !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(resourceName)
+    !isTechnicalDisplayValue(resourceName)
     ? resourceName
     : 'Unnamed resource';
+}
+
+function getProjectDisplayName(resource) {
+  const projectName = String(resource?.projectName ?? '').trim();
+  return projectName && !isTechnicalDisplayValue(projectName) ? projectName : 'Unnamed project';
+}
+
+function getResourceTypeDisplayName(resource) {
+  const resourceType = String(resource?.resourceType ?? '').trim();
+  return resourceType && !isTechnicalDisplayValue(resourceType) ? resourceType : '';
+}
+
+function isTechnicalDisplayValue(value) {
+  const normalizedValue = String(value ?? '').trim();
+  return (
+    /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(normalizedValue) ||
+    /^(?:https?:\/\/|urn:)/i.test(normalizedValue)
+  );
 }
 
 function resourceNameFromFileName(fileName) {

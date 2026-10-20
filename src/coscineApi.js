@@ -5,10 +5,6 @@ const EMULATOR_STORAGE_KEY = 'coscine-upload:emulator-state:v1';
 const DCTERMS_CONFORMS_TO = 'http://purl.org/dc/terms/conformsTo';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const SH_TARGET_CLASS = 'http://www.w3.org/ns/shacl#targetClass';
-const SH_PROPERTY = 'http://www.w3.org/ns/shacl#property';
-const SH_NODE = 'http://www.w3.org/ns/shacl#node';
-const SH_NODE_SHAPE = 'http://www.w3.org/ns/shacl#NodeShape';
-const SH_QUALIFIED_VALUE_SHAPE = 'http://www.w3.org/ns/shacl#qualifiedValueShape';
 const OWL_IMPORTS = 'http://www.w3.org/2002/07/owl#imports';
 const COSCINE_APPLICATION_PROFILE_URI_PREFIX = 'https://purl.org/coscine/ap/';
 export const COSCINE_ENVIRONMENTS = {
@@ -677,68 +673,20 @@ async function mergeApplicationProfileShapes(rootShapes, importedProfiles) {
   const parser = new Parser({ format: 'text/turtle' });
   const rootQuads = parser.parse(rootShapes);
   const importedQuadsByProfile = importedProfiles.map((shapes) => parser.parse(shapes));
-
-  // The form renders the resource profile's own root shape: the shape with
-  // sh:targetClass when the profile declares one, otherwise its first
-  // declared sh:NodeShape. Many Coscine profiles only use the latter.
-  const resourceRoot = findProfileRootShape(rootQuads);
-
   const mergedQuads = rootQuads.filter((item) => !isApplicationProfileImport(item));
-  const importedRootIdsByProfile = [];
 
   for (const importedQuads of importedQuadsByProfile) {
-    const importedRoots = collectImportedRootIds(importedQuads);
-    importedRootIdsByProfile.push(importedRoots);
-
     for (const item of importedQuads) {
       if (isApplicationProfileImport(item)) {
         continue;
       }
 
-      // Imported profiles supply reusable property shapes. They must not
-      // become a second top-level form that displaces the selected resource
-      // profile, so their own sh:targetClass statements are dropped.
-      if (importedRoots.has(item.subject.id) && item.predicate.value === SH_TARGET_CLASS) {
-        continue;
-      }
-
+      // Imported profiles provide definitions for shapes explicitly linked
+      // through sh:node or sh:qualifiedValueShape. Importing a graph does not
+      // make every property in that graph a property of the resource root.
       mergedQuads.push(item);
     }
   }
-
-  // Shapes reachable from the resource root through sh:property and sh:node
-  // references render their fields on their own. Inlining an imported profile
-  // that is already reachable this way would render its fields twice.
-  const reachableShapeIds = collectReachableShapeIds(mergedQuads, resourceRoot);
-
-  const existingPropertyIds = new Set(
-    rootQuads
-      .filter((item) => item.subject.equals(resourceRoot) && item.predicate.value === SH_PROPERTY)
-      .map((item) => item.object.id),
-  );
-
-  importedQuadsByProfile.forEach((importedQuads, index) => {
-    if (!resourceRoot) {
-      return;
-    }
-
-    for (const importedRootId of importedRootIdsByProfile[index]) {
-      if (reachableShapeIds.has(importedRootId)) {
-        continue;
-      }
-
-      for (const item of importedQuads) {
-        if (
-          item.subject.id === importedRootId &&
-          item.predicate.value === SH_PROPERTY &&
-          !existingPropertyIds.has(item.object.id)
-        ) {
-          mergedQuads.push(quad(resourceRoot, namedNode(SH_PROPERTY), item.object));
-          existingPropertyIds.add(item.object.id);
-        }
-      }
-    }
-  });
 
   return serializeTurtle(mergedQuads);
 }
@@ -749,91 +697,6 @@ function isApplicationProfileImport(item) {
     item.object.termType === 'NamedNode' &&
     item.object.value.startsWith(COSCINE_APPLICATION_PROFILE_URI_PREFIX)
   );
-}
-
-function findProfileRootShape(quads) {
-  return (
-    quads.find(
-      (item) => item.predicate.value === SH_TARGET_CLASS && item.subject.termType === 'NamedNode',
-    )?.subject ??
-    quads.find(
-      (item) =>
-        item.predicate.value === RDF_TYPE &&
-        item.object.termType === 'NamedNode' &&
-        item.object.value === SH_NODE_SHAPE &&
-        item.subject.termType === 'NamedNode',
-    )?.subject
-  );
-}
-
-function collectImportedRootIds(importedQuads) {
-  const rootIds = new Set(
-    importedQuads
-      .filter((item) => item.predicate.value === SH_TARGET_CLASS && item.subject.termType === 'NamedNode')
-      .map((item) => item.subject.id),
-  );
-
-  if (!rootIds.size) {
-    // Building-block profiles may declare no sh:targetClass; their root is
-    // the first declared sh:NodeShape.
-    const fallbackRoot = importedQuads.find(
-      (item) =>
-        item.predicate.value === RDF_TYPE &&
-        item.object.termType === 'NamedNode' &&
-        item.object.value === SH_NODE_SHAPE &&
-        item.subject.termType === 'NamedNode',
-    )?.subject;
-
-    if (fallbackRoot) {
-      rootIds.add(fallbackRoot.id);
-    }
-  }
-
-  return rootIds;
-}
-
-function collectReachableShapeIds(quads, rootShape) {
-  const reachableShapeIds = new Set();
-
-  if (!rootShape) {
-    return reachableShapeIds;
-  }
-
-  const quadsBySubject = new Map();
-  for (const item of quads) {
-    const subjectQuads = quadsBySubject.get(item.subject.id) ?? [];
-    subjectQuads.push(item);
-    quadsBySubject.set(item.subject.id, subjectQuads);
-  }
-
-  const visitShape = (shapeId) => {
-    if (reachableShapeIds.has(shapeId)) {
-      return;
-    }
-
-    reachableShapeIds.add(shapeId);
-
-    for (const item of quadsBySubject.get(shapeId) ?? []) {
-      if (item.predicate.value === SH_PROPERTY) {
-        // Property shapes may point at nested node shapes via sh:node or
-        // sh:qualifiedValueShape; the form renders those nested as well.
-        for (const nodeItem of quadsBySubject.get(item.object.id) ?? []) {
-          if (
-            nodeItem.predicate.value === SH_NODE ||
-            nodeItem.predicate.value === SH_QUALIFIED_VALUE_SHAPE
-          ) {
-            visitShape(nodeItem.object.id);
-          }
-        }
-      } else if (item.predicate.value === SH_NODE) {
-        visitShape(item.object.id);
-      }
-    }
-  };
-
-  visitShape(rootShape.id);
-
-  return reachableShapeIds;
 }
 
 async function fetchCoscineApplicationProfileRaw(apiToken, profileUri) {
