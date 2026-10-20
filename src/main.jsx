@@ -3,24 +3,25 @@ import { createRoot } from 'react-dom/client';
 import { DataFactory, Parser, Writer } from 'n3';
 import '@ulb-darmstadt/shacl-form';
 import coscineLogo from './assets/coscine_rgb.svg';
-import aimsLogo from './assets/aims_title_FHD_transparent_header.png';
 import {
-  COSCINE_ENVIRONMENTS,
   createCoscineService,
 } from './coscineApi';
-import {
-  DEFAULT_PROFILE_QUERY,
-  fetchAimsApplicationProfileDefinition,
-  fetchAimsApplicationProfiles,
-  getProfileBaseUri,
-} from './aimsApi';
 import './styles.css';
 
 const FORM_MEMORY_STORAGE_KEY = 'coscine-upload:form-memory:v1';
+const API_TOKEN_STORAGE_KEY = 'coscine-upload:api-token:v1';
+const SELECTED_RESOURCE_STORAGE_KEY = 'coscine-upload:selected-resource:v1';
+const EMPTY_SEARCH_FILES = Object.freeze([]);
+const MAX_TEXT_PREVIEW_BYTES = 100_000;
+const MAX_CSV_PREVIEW_ROWS = 100;
+const MAX_CSV_PREVIEW_COLUMNS = 30;
 const DCTERMS_CONFORMS_TO = 'http://purl.org/dc/terms/conformsTo';
 const DCTERMS_DESCRIPTION = 'http://purl.org/dc/terms/description';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const SH_NODE_SHAPE = 'http://www.w3.org/ns/shacl#NodeShape';
+const SH_CLASS = 'http://www.w3.org/ns/shacl#class';
+const SH_DATATYPE = 'http://www.w3.org/ns/shacl#datatype';
+const SH_IN = 'http://www.w3.org/ns/shacl#in';
 const SH_PATH = 'http://www.w3.org/ns/shacl#path';
 const SH_PROPERTY = 'http://www.w3.org/ns/shacl#property';
 const SH_NAME = 'http://www.w3.org/ns/shacl#name';
@@ -55,23 +56,14 @@ const APP_TEXT = {
     clear: 'Clear',
     clearSavedValues: 'Clear saved values',
     coscinePath: 'Coscine path',
-    createResource: 'Create resource',
-    createResourceHint: 'Define a test resource from a local SHACL file or AIMS.',
-    createTestResource: 'Create test resource',
-    creating: 'Creating...',
-    environment: 'Environment',
-    file: 'File',
-    loadFile: 'Load file',
-    loadResources: 'Load resources',
+    loadResources: 'Login with API Token',
     loading: 'Loading...',
     loadingShaclForm: 'Loading SHACL form...',
-    localFile: 'Local file',
+    logOut: 'Log out',
     mainViews: 'Main views',
-    metadataForm: 'Metadata form',
-    metadataProfileSource: 'Metadata profile source',
-    noFileLoaded: 'No file loaded',
-    productionEnvironment: 'Production environment',
+    metadataForm: 'Search form',
     ready: 'Ready',
+    rememberLogin: 'Keep me logged in on this device',
     delete: 'Delete',
     download: 'Download',
     files: 'Files',
@@ -81,16 +73,13 @@ const APP_TEXT = {
     resourceName: 'Resource name',
     search: 'Search',
     searchProfiles: 'Search profiles',
-    searchResources: 'Search resources',
+    selectResource: 'Select a resource',
     resizeFormAndFiles: 'Resize form and files',
     searching: 'Searching...',
     selectedFile: 'Selected files',
     shaclFormFile: 'SHACL form file',
     tabSearch: 'Search',
-    tabUpload: 'Hochladen',
-    tabView: 'View',
-    testEnvironment: 'Test environment',
-    tokenNotUsedPlaceholder: 'Token not used in test mode',
+    tabUpload: 'Upload',
     uploadFile: 'Upload files to Coscine',
     uploading: 'Uploading...',
     useMemoryCheckbox: 'Use the checkbox on a metadata field to remember its value in this browser.',
@@ -102,23 +91,14 @@ const APP_TEXT = {
     clear: 'Leeren',
     clearSavedValues: 'Gespeicherte Werte loeschen',
     coscinePath: 'Coscine-Pfad',
-    createResource: 'Ressource erstellen',
-    createResourceHint: 'Definiere eine Testressource aus einer lokalen SHACL-Datei oder AIMS.',
-    createTestResource: 'Testressource erstellen',
-    creating: 'Wird erstellt...',
-    environment: 'Umgebung',
-    file: 'Datei',
-    loadFile: 'Datei laden',
-    loadResources: 'Ressourcen laden',
+    loadResources: 'Mit API-Token anmelden',
     loading: 'Wird geladen...',
     loadingShaclForm: 'SHACL-Formular wird geladen...',
-    localFile: 'Lokale Datei',
+    logOut: 'Abmelden',
     mainViews: 'Hauptansichten',
-    metadataForm: 'Metadatenformular',
-    metadataProfileSource: 'Metadatenprofil-Quelle',
-    noFileLoaded: 'Keine Datei geladen',
-    productionEnvironment: 'Produktionsumgebung',
+    metadataForm: 'Suchformular',
     ready: 'Bereit',
+    rememberLogin: 'Auf diesem Geraet angemeldet bleiben',
     delete: 'Loeschen',
     download: 'Herunterladen',
     files: 'Dateien',
@@ -128,16 +108,13 @@ const APP_TEXT = {
     resourceName: 'Ressourcenname',
     search: 'Suchen',
     searchProfiles: 'Profile suchen',
-    searchResources: 'Ressourcen suchen',
+    selectResource: 'Ressource waehlen',
     resizeFormAndFiles: 'Formular und Dateien skalieren',
     searching: 'Suche...',
     selectedFile: 'Ausgewaehlte Dateien',
     shaclFormFile: 'SHACL-Formulardatei',
     tabSearch: 'Suche',
-    tabUpload: 'Upload',
-    tabView: 'Ansicht',
-    testEnvironment: 'Testumgebung',
-    tokenNotUsedPlaceholder: 'Token wird im Testmodus nicht verwendet',
+    tabUpload: 'Hochladen',
     uploadFile: 'Dateien nach Coscine hochladen',
     uploading: 'Wird hochgeladen...',
     useMemoryCheckbox: 'Nutze die Checkbox am Metadatenfeld, um den Wert in diesem Browser zu merken.',
@@ -149,12 +126,37 @@ function useAppText() {
   return useContext(AppTextContext);
 }
 
+function readSavedApiToken() {
+  try {
+    return localStorage.getItem(API_TOKEN_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function readSavedResourceKey() {
+  try {
+    return localStorage.getItem(SELECTED_RESOURCE_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeSavedResourceKey(resourceKeyValue) {
+  try {
+    if (resourceKeyValue) {
+      localStorage.setItem(SELECTED_RESOURCE_STORAGE_KEY, resourceKeyValue);
+    }
+  } catch {
+    // Resource selection remains usable when browser storage is unavailable.
+  }
+}
+
 function App() {
-  const [apiToken, setApiToken] = useState('');
-  const [coscineEnvironment, setCoscineEnvironment] = useState(COSCINE_ENVIRONMENTS.REAL);
+  const [apiToken, setApiToken] = useState(() => readSavedApiToken());
+  const [rememberLogin, setRememberLogin] = useState(() => Boolean(readSavedApiToken()));
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [activeTab, setActiveTab] = useState('upload');
-  const [resourceSearchText, setResourceSearchText] = useState('');
   const [searchResourceKey, setSearchResourceKey] = useState('');
   const [searchResourceDetails, setSearchResourceDetails] = useState(null);
   const [searchProfile, setSearchProfile] = useState(null);
@@ -170,36 +172,35 @@ function App() {
   const [metadataContent, setMetadataContent] = useState('');
   const [metadataValid, setMetadataValid] = useState(false);
   const [metadataValidationSummary, setMetadataValidationSummary] = useState('');
-  const [newResourceName, setNewResourceName] = useState('');
-  const [newResourceSource, setNewResourceSource] = useState('file');
-  const [newResourceShaclFile, setNewResourceShaclFile] = useState(null);
-  const [profileSearchText, setProfileSearchText] = useState(DEFAULT_PROFILE_QUERY);
-  const [metadataProfiles, setMetadataProfiles] = useState([]);
-  const [selectedMetadataProfile, setSelectedMetadataProfile] = useState(null);
-  const [profileSearchStatus, setProfileSearchStatus] = useState('');
-  const [profileSearchError, setProfileSearchError] = useState('');
-  const [isSearchingProfiles, setIsSearchingProfiles] = useState(false);
-  const [isLoadingMetadataProfile, setIsLoadingMetadataProfile] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [isLoadingResources, setIsLoadingResources] = useState(false);
-  const [isCreatingResource, setIsCreatingResource] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [virtualResources, setVirtualResources] = useState([]);
-  const [uploadedFiles, setUploadedFiles] = useState([]);
   const [formMemoryFields, setFormMemoryFields] = useState([]);
   const [rememberedFieldPaths, setRememberedFieldPaths] = useState([]);
   const metadataFormRef = useRef(null);
-  const newResourceFileInputRef = useRef(null);
-  const coscineService = useMemo(() => createCoscineService(coscineEnvironment), [coscineEnvironment]);
+  const shouldRestoreLogin = useRef(Boolean(readSavedApiToken()));
+  const coscineService = useMemo(() => createCoscineService(), []);
   const text = APP_TEXT[selectedLanguage] ?? APP_TEXT.en;
   const canLoadResources = !isLoadingResources && (!coscineService.tokenRequired || Boolean(apiToken.trim()));
-  const isTestEnvironment = coscineEnvironment === COSCINE_ENVIRONMENTS.TEST;
 
   useEffect(() => {
     document.documentElement.lang = selectedLanguage;
   }, [selectedLanguage]);
+
+  useEffect(() => {
+    try {
+      if (rememberLogin && apiToken.trim()) {
+        localStorage.setItem(API_TOKEN_STORAGE_KEY, apiToken);
+      } else {
+        localStorage.removeItem(API_TOKEN_STORAGE_KEY);
+      }
+    } catch {
+      // The app remains usable when browser storage is unavailable.
+    }
+  }, [apiToken, rememberLogin]);
 
   const selectedResource = useMemo(
     () => resources.find((resource) => resourceKey(resource) === selectedKey) ?? null,
@@ -209,6 +210,12 @@ function App() {
     () => resources.find((resource) => resourceKey(resource) === searchResourceKey) ?? null,
     [resources, searchResourceKey],
   );
+
+  function selectResource(resourceKeyValue) {
+    setSelectedKey(resourceKeyValue);
+    setSearchResourceKey(resourceKeyValue);
+    writeSavedResourceKey(resourceKeyValue);
+  }
 
   useEffect(() => {
     setProjectsCount(0);
@@ -225,37 +232,12 @@ function App() {
     setMetadataContent('');
     setMetadataValid(false);
     setMetadataValidationSummary('');
-    setNewResourceName('');
-    setNewResourceSource('file');
-    setNewResourceShaclFile(null);
-    setProfileSearchText(DEFAULT_PROFILE_QUERY);
-    setMetadataProfiles([]);
-    setSelectedMetadataProfile(null);
-    setProfileSearchStatus('');
-    setProfileSearchError('');
-    setVirtualResources([]);
-    setUploadedFiles([]);
     setError('');
-    setStatus(
-      coscineService.environment === COSCINE_ENVIRONMENTS.TEST
-        ? 'Test environment selected. Resources and uploads are stored locally in this browser.'
-        : '',
-    );
+    setStatus('');
   }, [coscineService]);
 
-  useEffect(() => {
-    if (isTestEnvironment && activeTab === 'search') {
-      setActiveTab('upload');
-      return;
-    }
-
-    if (!isTestEnvironment && activeTab === 'view') {
-      setActiveTab('search');
-    }
-  }, [activeTab, isTestEnvironment]);
-
   async function loadResources(event) {
-    event.preventDefault();
+    event?.preventDefault();
     setError('');
     setStatus(`Loading ${coscineService.label} resources...`);
     setProjectsCount(0);
@@ -270,33 +252,66 @@ function App() {
     setMetadataContent('');
     setMetadataValid(false);
     setMetadataValidationSummary('');
-    setNewResourceName('');
-    setNewResourceShaclFile(null);
-    setSelectedMetadataProfile(null);
-    setProfileSearchError('');
-    setVirtualResources([]);
-    setUploadedFiles([]);
     setIsLoadingResources(true);
 
     try {
       const payload = await coscineService.fetchResourceOptions(apiToken);
+      const savedResourceKey = readSavedResourceKey();
+      const restoredResourceKey = payload.resources.some(
+        (resource) => resourceKey(resource) === savedResourceKey,
+      )
+        ? savedResourceKey
+        : payload.resources[0]
+          ? resourceKey(payload.resources[0])
+          : '';
       setProjectsCount(payload.projects);
       setResources(payload.resources);
+      setSelectedKey(restoredResourceKey);
+      setSearchResourceKey(restoredResourceKey);
+      writeSavedResourceKey(restoredResourceKey);
+      setIsLoggedIn(true);
       setStatus(
         payload.resources.length
           ? `Select a resource, choose a file, then fill the required Coscine metadata. Using ${coscineService.label}.`
-          : isTestEnvironment
-            ? 'Create a test resource from a SHACL form file.'
           : 'No resources returned for this API token.',
       );
-      await refreshTestViewData();
     } catch (loadError) {
+      setIsLoggedIn(false);
       setError(loadError.message || 'Could not load Coscine resources.');
       setStatus('');
     } finally {
       setIsLoadingResources(false);
     }
   }
+
+  function logOut() {
+    setApiToken('');
+    setRememberLogin(false);
+    setIsLoggedIn(false);
+    setProjectsCount(0);
+    setResources([]);
+    setSelectedKey('');
+    setSearchResourceKey('');
+    setSearchResourceDetails(null);
+    setSearchProfile(null);
+    setProfile(null);
+    setSelectedFiles([]);
+    setTargetPath('');
+    setMetadataContent('');
+    setMetadataValid(false);
+    setMetadataValidationSummary('');
+    setError('');
+    setStatus('Logged out.');
+  }
+
+  useEffect(() => {
+    if (!shouldRestoreLogin.current) {
+      return;
+    }
+
+    shouldRestoreLogin.current = false;
+    loadResources();
+  }, []);
 
   useEffect(() => {
     if ((!apiToken.trim() && coscineService.tokenRequired) || !selectedResource) {
@@ -343,7 +358,6 @@ function App() {
   useEffect(() => {
     if (
       activeTab !== 'search' ||
-      isTestEnvironment ||
       !apiToken.trim() ||
       !selectedSearchResource ||
       typeof coscineService.fetchResourceDetails !== 'function'
@@ -402,7 +416,7 @@ function App() {
     return () => {
       isActive = false;
     };
-  }, [activeTab, apiToken, coscineService, isTestEnvironment, selectedSearchResource]);
+  }, [activeTab, apiToken, coscineService, selectedSearchResource]);
 
   async function uploadToCoscine() {
     setError('');
@@ -465,7 +479,6 @@ function App() {
       }
 
       setStatus(`Uploaded ${filesToUpload.length} file${filesToUpload.length === 1 ? '' : 's'} to ${coscineService.label}.`);
-      await refreshTestViewData();
     } catch (uploadError) {
       setError(uploadError.message || 'Could not upload to Coscine.');
       setStatus('');
@@ -473,187 +486,6 @@ function App() {
       setIsUploading(false);
     }
   }
-
-  async function createTestResource(event) {
-    event.preventDefault();
-    setError('');
-    setStatus('Creating test resource...');
-    setIsCreatingResource(true);
-
-    try {
-      const profileDefinition = selectedMetadataProfile?.definition ?? null;
-      const usesProfileService = newResourceSource === 'profile';
-      const shaclFileName = usesProfileService
-        ? `${resourceNameFromFileName(profileDefinition?.name || 'metadata-profile')}.ttl`
-        : newResourceShaclFile?.name;
-
-      if (!usesProfileService && !newResourceShaclFile) {
-        throw new Error('Choose a SHACL form file.');
-      }
-
-      if (usesProfileService && !profileDefinition?.shapes) {
-        throw new Error('Select a metadata profile from the service.');
-      }
-
-      const shaclContent = usesProfileService ? profileDefinition.shapes : await newResourceShaclFile.text();
-      const resourceName =
-        newResourceName.trim() ||
-        (usesProfileService
-          ? selectedMetadataProfile?.name || profileDefinition.name || profileDefinition.baseUri || 'Metadata profile'
-          : resourceNameFromFileName(newResourceShaclFile.name));
-      const createdResource = await coscineService.createResource({
-        name: resourceName,
-        shaclFileName,
-        shaclContent,
-      });
-
-      setResources((currentResources) => [...currentResources, createdResource]);
-      setSelectedKey(resourceKey(createdResource));
-      setStatus(`Created ${createdResource.resourceName} in ${coscineService.label}.`);
-      setNewResourceName('');
-      setNewResourceShaclFile(null);
-      setSelectedMetadataProfile(null);
-      await refreshTestViewData();
-    } catch (createError) {
-      setError(createError.message || 'Could not create the test resource.');
-      setStatus('');
-    } finally {
-      setIsCreatingResource(false);
-    }
-  }
-
-  async function searchMetadataProfiles(event) {
-    event.preventDefault();
-    const trimmedQuery = profileSearchText.trim();
-
-    if (!trimmedQuery) {
-      setMetadataProfiles([]);
-      setProfileSearchStatus('Enter a search string.');
-      setProfileSearchError('');
-      return;
-    }
-
-    setIsSearchingProfiles(true);
-    setProfileSearchError('');
-    setProfileSearchStatus('Searching metadata profiles...');
-
-    try {
-      const profiles = await fetchAimsApplicationProfiles({ query: trimmedQuery });
-      setMetadataProfiles(profiles);
-      setProfileSearchStatus(
-        profiles.length === 1
-          ? '1 metadata profile found.'
-          : `${profiles.length} metadata profiles found.`,
-      );
-    } catch (searchError) {
-      setMetadataProfiles([]);
-      setProfileSearchStatus('');
-      setProfileSearchError(searchError?.message || 'Unable to search metadata profiles.');
-    } finally {
-      setIsSearchingProfiles(false);
-    }
-  }
-
-  async function selectMetadataProfile(profile) {
-    setIsLoadingMetadataProfile(true);
-    setProfileSearchError('');
-
-    try {
-      const definition = await fetchAimsApplicationProfileDefinition({ profile });
-      setSelectedMetadataProfile({
-        baseUri: getProfileBaseUri(profile),
-        definition,
-        name: profile.name || definition.name || 'Metadata profile',
-      });
-      setNewResourceName(profile.name || definition.name || getProfileBaseUri(profile) || 'Metadata profile');
-      setProfileSearchStatus(`Loaded ${definition.name}.`);
-    } catch (selectError) {
-      setProfileSearchError(selectError?.message || 'Unable to load selected metadata profile.');
-    } finally {
-      setIsLoadingMetadataProfile(false);
-    }
-  }
-
-  async function refreshTestViewData() {
-    if (!isTestEnvironment || typeof coscineService.getViewData !== 'function') {
-      return;
-    }
-
-    const snapshot = await coscineService.getViewData();
-    setVirtualResources(snapshot.resources ?? []);
-    setUploadedFiles(snapshot.uploads ?? []);
-  }
-
-  async function deleteTestResource(resource) {
-    if (!isTestEnvironment || typeof coscineService.deleteResource !== 'function') {
-      return;
-    }
-
-    setError('');
-    setStatus(`Deleting ${resource.resourceName || resource.resourceId}...`);
-
-    try {
-      await coscineService.deleteResource({
-        projectId: resource.projectId,
-        resourceId: resource.resourceId,
-      });
-      setResources((currentResources) =>
-        currentResources.filter((item) => item.projectId !== resource.projectId || item.resourceId !== resource.resourceId),
-      );
-      if (selectedKey === resourceKey(resource)) {
-        setSelectedKey('');
-        setProfile(null);
-        setSelectedFiles([]);
-        setTargetPath('');
-        setMetadataContent('');
-        setMetadataValid(false);
-        setMetadataValidationSummary('');
-      }
-      setStatus(`Deleted ${resource.resourceName || resource.resourceId} and its uploaded files.`);
-      await refreshTestViewData();
-    } catch (deleteError) {
-      setError(deleteError.message || 'Could not delete the test resource.');
-      setStatus('');
-    }
-  }
-
-  async function deleteTestUpload(file) {
-    if (!isTestEnvironment || typeof coscineService.deleteUploadedFile !== 'function') {
-      return;
-    }
-
-    setError('');
-    setStatus(`Deleting ${file.fileName || file.storageKey}...`);
-
-    try {
-      await coscineService.deleteUploadedFile({ storageKey: file.storageKey });
-      setStatus(`Deleted ${file.fileName || file.storageKey}.`);
-      await refreshTestViewData();
-    } catch (deleteError) {
-      setError(deleteError.message || 'Could not delete the uploaded file.');
-      setStatus('');
-    }
-  }
-
-  useEffect(() => {
-    if (activeTab !== 'view' || !isTestEnvironment) {
-      return undefined;
-    }
-
-    let isActive = true;
-    refreshTestViewData().catch((viewError) => {
-      if (!isActive) {
-        return;
-      }
-
-      setError(viewError.message || 'Could not load the test view.');
-      setStatus('');
-    });
-
-    return () => {
-      isActive = false;
-    };
-  }, [activeTab, coscineService, isTestEnvironment]);
 
   return (
     <AppTextContext.Provider value={text}>
@@ -673,26 +505,31 @@ function App() {
         </div>
 
         <form className="token-form" onSubmit={loadResources}>
-          <label className="environment-field">
-            <span>{text.environment}</span>
-            <select
-              value={coscineEnvironment}
-              onChange={(event) => setCoscineEnvironment(event.target.value)}
-            >
-              <option value={COSCINE_ENVIRONMENTS.REAL}>{text.productionEnvironment}</option>
-              <option value={COSCINE_ENVIRONMENTS.TEST}>{text.testEnvironment}</option>
-            </select>
-          </label>
           <input
             type="password"
             value={apiToken}
-            placeholder={coscineService.tokenRequired ? text.apiTokenPlaceholder : text.tokenNotUsedPlaceholder}
+            placeholder={text.apiTokenPlaceholder}
             autoComplete="off"
-            disabled={!coscineService.tokenRequired}
-            onChange={(event) => setApiToken(event.target.value)}
+            onChange={(event) => {
+              setApiToken(event.target.value);
+              setIsLoggedIn(false);
+            }}
           />
-          <button type="submit" disabled={!canLoadResources}>
-            {isLoadingResources ? text.loading : text.loadResources}
+          <label className="remember-login">
+            <input
+              type="checkbox"
+              checked={rememberLogin}
+              onChange={(event) => setRememberLogin(event.target.checked)}
+            />
+            <span>{text.rememberLogin}</span>
+          </label>
+          <button
+            className={isLoggedIn ? 'login-button logged-in' : 'login-button'}
+            type={isLoggedIn ? 'button' : 'submit'}
+            disabled={!canLoadResources}
+            onClick={isLoggedIn ? logOut : undefined}
+          >
+            {isLoadingResources ? text.loading : isLoggedIn ? text.logOut : text.loadResources}
           </button>
         </form>
       </header>
@@ -707,18 +544,7 @@ function App() {
         </button>
         <button
           type="button"
-          className={
-            activeTab === 'view' && isTestEnvironment ? 'tab-button active' : 'tab-button'
-          }
-          hidden={!isTestEnvironment}
-          onClick={() => setActiveTab('view')}
-        >
-          {text.tabView}
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'search' && !isTestEnvironment ? 'tab-button active' : 'tab-button'}
-          hidden={isTestEnvironment}
+          className={activeTab === 'search' ? 'tab-button active' : 'tab-button'}
           onClick={() => setActiveTab('search')}
         >
           {text.tabSearch}
@@ -731,173 +557,25 @@ function App() {
       {activeTab === 'upload' ? (
         <section className="content-grid">
           <aside className="resource-list">
-            {isTestEnvironment ? (
-              <section className="create-resource-panel">
-                  <div className="panel-title">
-                    <div>
-                      <h3>{text.createResource}</h3>
-                      <p>{text.createResourceHint}</p>
-                    </div>
-                  </div>
-
-                <form className="create-resource-form" onSubmit={createTestResource}>
-                  <div
-                    className={
-                      newResourceSource === 'profile'
-                        ? 'source-toggle source-toggle-profile'
-                        : 'source-toggle source-toggle-file'
-                    }
-                    aria-label={text.metadataProfileSource}
-                    role="group"
-                  >
-                    <button
-                      type="button"
-                      className={newResourceSource === 'file' ? 'source-toggle-button active' : 'source-toggle-button'}
-                      onClick={() => setNewResourceSource('file')}
-                    >
-                      {text.localFile}
-                    </button>
-                    <button
-                      type="button"
-                      className={newResourceSource === 'profile' ? 'source-toggle-button active' : 'source-toggle-button'}
-                      onClick={() => setNewResourceSource('profile')}
-                    >
-                      {text.aims}
-                    </button>
-                  </div>
-
-                  <label className="field-label">
-                    {text.resourceName}
-                    <input
-                      value={newResourceName}
-                      placeholder="Example resource"
-                      onChange={(event) => setNewResourceName(event.target.value)}
-                    />
-                  </label>
-
-                  {newResourceSource === 'file' ? (
-                    <div className="field-label">
-                      {text.shaclFormFile}
-                      <div className="file-load-row">
-                        <input
-                          ref={newResourceFileInputRef}
-                          className="visually-hidden-input"
-                          type="file"
-                          accept=".ttl,.txt,.rdf,.jsonld,.json"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0] ?? null;
-                            setNewResourceShaclFile(file);
-
-                            if (file) {
-                              setNewResourceName(resourceNameFromFileName(file.name));
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="load-file-button"
-                          onClick={() => newResourceFileInputRef.current?.click()}
-                        >
-                          {text.loadFile}
-                        </button>
-                        <span>{newResourceShaclFile?.name || text.noFileLoaded}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="profile-service-panel">
-                      <div className="aims-brand">
-                        <img src={aimsLogo} alt="AIMS" />
-                      </div>
-
-                      <div className="field-label">
-                        {text.searchProfiles}
-                        <div className="profile-search-row">
-                          <input
-                            type="search"
-                            value={profileSearchText}
-                            placeholder="RO-kit"
-                            onChange={(event) => setProfileSearchText(event.target.value)}
-                          />
-                          <button type="button" onClick={searchMetadataProfiles} disabled={isSearchingProfiles}>
-                            {isSearchingProfiles ? text.searching : text.search}
-                          </button>
-                        </div>
-                      </div>
-
-                      {profileSearchStatus ? <p className="profile-service-status">{profileSearchStatus}</p> : null}
-                      {profileSearchError ? <p className="profile-service-error">{profileSearchError}</p> : null}
-
-                      <div className="profile-results" aria-label="Metadata profiles">
-                        {metadataProfiles.length ? (
-                          metadataProfiles.map((profile, index) => {
-                            const baseUri = getProfileBaseUri(profile);
-                            const isSelected =
-                              selectedMetadataProfile?.baseUri &&
-                              selectedMetadataProfile.baseUri === baseUri;
-
-                            return (
-                              <button
-                                className={isSelected ? 'profile-result active' : 'profile-result'}
-                                key={`${profile.name || 'profile'}-${baseUri || index}`}
-                                type="button"
-                                title={baseUri || undefined}
-                                disabled={isLoadingMetadataProfile}
-                                onClick={() => selectMetadataProfile(profile)}
-                              >
-                                <strong>{profile.name || 'Unnamed metadata profile'}</strong>
-                                <small>{baseUri || 'No base URI'}</small>
-                              </button>
-                            );
-                          })
-                        ) : (
-                          <p className="profile-service-empty">No metadata profiles listed.</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    className="primary-action secondary-action"
-                    type="submit"
-                    disabled={
-                      isCreatingResource ||
-                      !newResourceName.trim() ||
-                      (newResourceSource === 'file'
-                        ? !newResourceShaclFile
-                        : !selectedMetadataProfile?.definition?.shapes)
-                    }
-                  >
-                    {isCreatingResource ? text.creating : text.createTestResource}
-                  </button>
-                </form>
-              </section>
-            ) : null}
-
             {resources.length ? (
-              groupResourcesByProject(resources).map((project) => (
-                <div className="project-group" key={project.id}>
-                  <div className="project-heading">
-                    <strong>{project.name}</strong>
-                    <span>{project.resources.length}</span>
-                  </div>
-                  {project.resources.map((resource) => (
-                    <button
-                      className={selectedKey === resourceKey(resource) ? 'resource-row active' : 'resource-row'}
-                      key={resourceKey(resource)}
-                      type="button"
-                      onClick={() => setSelectedKey(resourceKey(resource))}
-                    >
-                      <strong>{resource.resourceName}</strong>
-                      <small>{resource.resourceType || 'Resource'}</small>
-                    </button>
+              <label className="field-label resource-select-field">
+                <span>{text.selectResource}</span>
+                <select value={selectedKey} onChange={(event) => selectResource(event.target.value)}>
+                  {groupResourcesByProject(resources).map((project) => (
+                    <optgroup key={project.id} label={project.name}>
+                      {project.resources.map((resource) => (
+                        <option key={resourceKey(resource)} value={resourceKey(resource)}>
+                          {resource.resourceName}
+                          {resource.resourceType ? ` (${resource.resourceType})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
-                </div>
-              ))
+                </select>
+              </label>
             ) : (
               <div className="empty-state">
-                {coscineService.tokenRequired
-                  ? 'Enter an API token and load resources.'
-                  : 'Load test resources from the emulator.'}
+                Enter an API token and load resources.
               </div>
             )}
           </aside>
@@ -916,7 +594,7 @@ function App() {
                 serviceLabel={coscineService.label}
                 selectedFiles={selectedFiles}
                 targetPath={targetPath}
-                uploadButtonLabel={isTestEnvironment ? 'Upload files to virtual Coscine' : text.uploadFile}
+                uploadButtonLabel={text.uploadFile}
                 onFilesChange={(files) => {
                   setSelectedFiles(files);
                   setTargetPath(files.length === 1 ? files[0].name : '');
@@ -944,25 +622,14 @@ function App() {
           rangeFilters={searchRangeFilters}
           resourceDetails={searchResourceDetails}
           resources={resources}
-          searchText={resourceSearchText}
           selectedResource={selectedSearchResource}
           selectedResourceKey={searchResourceKey}
           service={coscineService}
           onFilterRdfChange={setSearchFilterRdf}
           onRangeFiltersChange={setSearchRangeFilters}
-          onSearchTextChange={setResourceSearchText}
-          onSelectResource={(resource) => setSearchResourceKey(resourceKey(resource))}
+          onSelectResourceKey={selectResource}
         />
-      ) : (
-        <TestEnvironmentView
-          isEnabled={isTestEnvironment}
-          resources={virtualResources}
-          uploadedFiles={uploadedFiles}
-          onDeleteResource={deleteTestResource}
-          onDeleteUpload={deleteTestUpload}
-          onRefresh={refreshTestViewData}
-        />
-      )}
+      ) : null}
     </main>
     </AppTextContext.Provider>
   );
@@ -1002,33 +669,18 @@ function SearchView({
   isLoadingSelection,
   onFilterRdfChange,
   onRangeFiltersChange,
-  onSearchTextChange,
-  onSelectResource,
+  onSelectResourceKey,
   profile,
   rangeFilters,
   resourceDetails,
   resources,
-  searchText,
   selectedLanguage,
   selectedResource,
   selectedResourceKey,
   service,
 }) {
   const text = useAppText();
-  const normalizedSearch = searchText.trim().toLowerCase();
-  const matchingResources = normalizedSearch
-    ? resources.filter((resource) =>
-        [
-          resource.projectName,
-          resource.resourceName,
-          resource.resourceType,
-          resource.applicationProfileUri,
-        ]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(normalizedSearch)),
-      )
-    : resources;
-  const files = resourceDetails?.files ?? [];
+  const files = resourceDetails?.files ?? EMPTY_SEARCH_FILES;
   const [localFilterRdf, setLocalFilterRdf] = useState('');
   const filteredFiles = useMemo(
     () => applyRangeFilters(filterFiles(files, localFilterRdf), rangeFilters),
@@ -1044,42 +696,22 @@ function SearchView({
     <>
       <section className="content-grid search-content-grid">
         <aside className="resource-list search-resource-list">
-          <div className="search-list-head">
-            <label className="field-label">
-              {text.searchResources}
-              <input
-                type="search"
-                value={searchText}
-                placeholder="Resource, project, type, or profile URI"
-                onChange={(event) => onSearchTextChange(event.target.value)}
-              />
-            </label>
-          </div>
-
           {resources.length ? (
-            matchingResources.length ? (
-              groupResourcesByProject(matchingResources).map((project) => (
-                <div className="project-group" key={project.id}>
-                  <div className="project-heading">
-                    <strong>{project.name}</strong>
-                    <span>{project.resources.length}</span>
-                  </div>
-                  {project.resources.map((resource) => (
-                    <button
-                      className={selectedResourceKey === resourceKey(resource) ? 'resource-row active' : 'resource-row'}
-                      key={resourceKey(resource)}
-                      type="button"
-                      onClick={() => onSelectResource(resource)}
-                    >
-                      <strong>{resource.resourceName}</strong>
-                      <small>{resource.resourceType || 'Resource'}</small>
-                    </button>
-                  ))}
-                </div>
-              ))
-            ) : (
-              <div className="empty-state">No resources match this search.</div>
-            )
+            <label className="field-label resource-select-field">
+              <span>{text.selectResource}</span>
+              <select value={selectedResourceKey} onChange={(event) => onSelectResourceKey(event.target.value)}>
+                {groupResourcesByProject(resources).map((project) => (
+                  <optgroup key={project.id} label={project.name}>
+                    {project.resources.map((resource) => (
+                      <option key={resourceKey(resource)} value={resourceKey(resource)}>
+                        {resource.resourceName}
+                        {resource.resourceType ? ` (${resource.resourceType})` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
           ) : (
             <div className="empty-state">Load production resources before searching.</div>
           )}
@@ -1123,9 +755,10 @@ function SearchResourceWorkspace({
 }) {
   const [selectedFilePath, setSelectedFilePath] = useState('');
   const [formWidth, setFormWidth] = useState(58);
+  const [filterResetVersion, setFilterResetVersion] = useState(0);
   const selectedFile = useMemo(
-    () => rawFiles.find((file) => searchFilePath(file) === selectedFilePath) ?? null,
-    [rawFiles, selectedFilePath],
+    () => files.find((file) => searchFilePath(file) === selectedFilePath) ?? null,
+    [files, selectedFilePath],
   );
 
   useEffect(() => {
@@ -1135,10 +768,8 @@ function SearchResourceWorkspace({
   }, [onFilterRdfChange, onRangeFiltersChange, resource.projectId, resource.resourceId]);
 
   useEffect(() => {
-    if (!selectedFilePath && files.length) {
-      setSelectedFilePath(searchFilePath(files[0]));
-    }
-  }, [files, selectedFilePath]);
+    setSelectedFilePath(files.length ? searchFilePath(files[0]) : '');
+  }, [files]);
 
   return (
     <>
@@ -1150,10 +781,11 @@ function SearchResourceWorkspace({
         <span>{rawFiles.length} files</span>
       </div>
 
-      <div className="metadata-line">
-        <span>{resource.resourceType || 'Resource type unknown'}</span>
-        <span>{resource.applicationProfileUri || 'No application profile URI'}</span>
-      </div>
+      {resource.resourceType ? (
+        <div className="metadata-line">
+          <span>{resource.resourceType}</span>
+        </div>
+      ) : null}
 
       <div
         className="search-workspace-split"
@@ -1167,14 +799,14 @@ function SearchResourceWorkspace({
           onRangeFiltersChange={onRangeFiltersChange}
           profile={profile}
           rawFiles={rawFiles}
+          resetVersion={filterResetVersion}
           resource={resource}
           selectedLanguage={selectedLanguage}
-          selectedFile={selectedFile}
           onFilterRdfChange={onFilterRdfChange}
           onClear={() => {
-            setSelectedFilePath('');
             onFilterRdfChange('');
             onRangeFiltersChange({});
+            setFilterResetVersion((currentVersion) => currentVersion + 1);
           }}
         />
         <ResizeHandle
@@ -1195,7 +827,9 @@ function SearchResourceWorkspace({
           <FilePreview
             apiToken={apiToken}
             file={selectedFile}
+            profile={profile}
             resource={resource}
+            selectedLanguage={selectedLanguage}
             service={service}
           />
         </div>
@@ -1249,21 +883,20 @@ function MetadataFilterForm({
   onRangeFiltersChange,
   profile,
   rawFiles,
+  resetVersion,
   resource,
   selectedLanguage,
-  selectedFile,
 }) {
   const text = useAppText();
-  const normalizedMetadata = normalizeSearchMetadataForForm(selectedFile?.metadata, selectedFile);
-  const formKey = `${resource.projectId}:${resource.resourceId}:${profile?.baseUri ?? 'none'}:${searchFilePath(selectedFile)}`;
+  const formKey = `${resource.projectId}:${resource.resourceId}:${profile?.baseUri ?? 'none'}:${resetVersion}`;
   const numericRangeStats = useMemo(() => buildNumericRangeStats(rawFiles), [rawFiles]);
-
+  const observedMetadataValues = useMemo(() => buildObservedMetadataValueMap(rawFiles), [rawFiles]);
   return (
     <section className="form-panel">
       <div className="panel-title">
         <div>
           <h3>{text.metadataForm}</h3>
-          <p>{selectedFile ? searchFilePath(selectedFile) : 'Select a file to fill the form.'}</p>
+          <p>Filter the files in this resource.</p>
         </div>
         <button type="button" onClick={onClear}>
           {text.clear}
@@ -1274,17 +907,13 @@ function MetadataFilterForm({
       {!isLoading && !profile?.shapes ? (
         <p className="muted">No SHACL application profile is available for this resource.</p>
       ) : null}
-      {!isLoading && profile?.shapes && selectedFile && !normalizedMetadata.values ? (
-        <p className="muted">The selected file has no RDF metadata values to prefill this form.</p>
-      ) : null}
       {!isLoading && profile?.shapes ? (
         <SearchShaclFormHost
-          formKey={formKey}
+          key={formKey}
           numericRangeStats={numericRangeStats}
+          observedMetadataValues={observedMetadataValues}
           shapes={profile.shapes}
           selectedLanguage={selectedLanguage}
-          values={normalizedMetadata.values}
-          valuesSubject={normalizedMetadata.subject}
           onRangeFiltersChange={onRangeFiltersChange}
           onSerializedChange={onFilterRdfChange}
         />
@@ -1294,89 +923,105 @@ function MetadataFilterForm({
 }
 
 function SearchShaclFormHost({
-  formKey,
   numericRangeStats,
+  observedMetadataValues,
   onRangeFiltersChange,
   onSerializedChange,
   selectedLanguage,
   shapes,
-  values,
-  valuesSubject,
 }) {
-  const hostRef = useRef(null);
-  const sanitizedShapes = useMemo(() => sanitizeShapesForForm(shapes), [shapes]);
-  const rootShapeSubject = useMemo(() => findRootShapeSubject(sanitizedShapes), [sanitizedShapes]);
-  const descriptionsByPath = useMemo(
-    () => collectShapeDescriptionsByPath(sanitizedShapes, selectedLanguage),
-    [sanitizedShapes, selectedLanguage],
+  const fields = useMemo(
+    () => buildNativeSearchFields(shapes, observedMetadataValues, numericRangeStats, selectedLanguage),
+    [numericRangeStats, observedMetadataValues, selectedLanguage, shapes],
   );
-  const dirtyFilterPathsRef = useRef(new Set());
+  const [textValues, setTextValues] = useState({});
+  const [rangeValues, setRangeValues] = useState(() =>
+    Object.fromEntries(
+      fields
+        .filter((field) => field.kind === 'range')
+        .map((field) => [field.path, [field.proposedMin, field.proposedMax]]),
+    ),
+  );
+  const rangeLabels = getRangeLabels(selectedLanguage);
 
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host || !sanitizedShapes) {
-      onSerializedChange('');
-      return undefined;
-    }
+  const updateTextFilter = (path, value) => {
+    const nextValues = { ...textValues, [path]: value };
+    setTextValues(nextValues);
+    onSerializedChange(
+      JSON.stringify(
+        Object.entries(nextValues)
+          .filter(([, fieldValue]) => String(fieldValue).trim() !== '')
+          .map(([fieldPath, fieldValue]) => ({ path: fieldPath, value: fieldValue })),
+      ),
+    );
+  };
 
-    dirtyFilterPathsRef.current = new Set();
-    host.replaceChildren();
+  const updateRangeFilter = (field, index, value) => {
+    const current = rangeValues[field.path] ?? [field.proposedMin, field.proposedMax];
+    const nextRange = [...current];
+    nextRange[index] = value;
+    setRangeValues((ranges) => ({ ...ranges, [field.path]: nextRange }));
+    const min = formInputToRangeValue({ type: field.inputType, value: nextRange[0] });
+    const max = formInputToRangeValue({ type: field.inputType, value: nextRange[1] });
 
-    const formElement = document.createElement('shacl-form');
-    formElement.setAttribute('data-shapes', sanitizedShapes);
-    formElement.setAttribute('data-language', selectedLanguage);
-    if (rootShapeSubject) {
-      formElement.setAttribute('data-shape-subject', rootShapeSubject);
-    }
-    formElement.setAttribute('data-show-root-shape-label', '');
+    onRangeFiltersChange((filters) => ({
+      ...filters,
+      [field.path]: [
+        Number.isFinite(min) ? min : Number.NEGATIVE_INFINITY,
+        Number.isFinite(max) ? max : Number.POSITIVE_INFINITY,
+      ],
+    }));
+  };
 
-    if (values) {
-      formElement.setAttribute('data-values', values);
-    }
-
-    if (valuesSubject) {
-      formElement.setAttribute('data-values-subject', valuesSubject);
-    }
-
-    const updateSerialized = (event) => {
-      event?.preventDefault?.();
-      const path = getSearchFilterEventPath(event);
-
-      if (path) {
-        dirtyFilterPathsRef.current.add(path);
-      }
-
-      onSerializedChange(collectSearchFormFilterText(formElement, dirtyFilterPathsRef.current));
-    };
-    let cleanupLiveFieldListeners = () => {};
-    const enhanceForm = () => {
-      enhanceRangeFields(formElement, onRangeFiltersChange, numericRangeStats);
-      attachFieldDescriptionTooltips(formElement, descriptionsByPath);
-      cleanupLiveFieldListeners();
-      cleanupLiveFieldListeners = attachLiveFieldListeners(formElement, updateSerialized);
-    };
-
-    formElement.addEventListener('input', updateSerialized, true);
-    formElement.addEventListener('change', updateSerialized);
-    formElement.addEventListener('submit', updateSerialized);
-    formElement.addEventListener('ready', enhanceForm);
-    host.appendChild(formElement);
-    const descriptionObserver = observeFieldDescriptionTooltips(formElement, descriptionsByPath);
-    window.setTimeout(() => attachFieldDescriptionTooltips(formElement, descriptionsByPath), 0);
-    window.setTimeout(() => attachFieldDescriptionTooltips(formElement, descriptionsByPath), 250);
-
-    return () => {
-      descriptionObserver.disconnect();
-      cleanupLiveFieldListeners();
-      formElement.removeEventListener('input', updateSerialized, true);
-      formElement.removeEventListener('change', updateSerialized);
-      formElement.removeEventListener('submit', updateSerialized);
-      formElement.removeEventListener('ready', enhanceForm);
-      host.replaceChildren();
-    };
-  }, [descriptionsByPath, formKey, numericRangeStats, onRangeFiltersChange, onSerializedChange, rootShapeSubject, sanitizedShapes, selectedLanguage, values, valuesSubject]);
-
-  return <div className="shacl-form-host" ref={hostRef} />;
+  return (
+    <div className="native-search-form">
+      {fields.map((field) => (
+        <div className="native-search-field" key={field.path} title={field.description || undefined}>
+          <label htmlFor={field.id}>{field.label}</label>
+          {field.kind === 'readonly' ? (
+            <input id={field.id} readOnly value={field.displayValue} />
+          ) : field.kind === 'select' ? (
+            <select
+              id={field.id}
+              value={textValues[field.path] ?? ''}
+              onChange={(event) => updateTextFilter(field.path, event.target.value)}
+            >
+              <option value="">Any</option>
+              {field.values.map((value) => (
+                <option key={value} value={value}>{compactMetadataUri(value)}</option>
+              ))}
+            </select>
+          ) : field.kind === 'range' ? (
+            <div className="native-search-range">
+              <label>
+                <span>{rangeLabels.from}</span>
+                <input
+                  type={field.inputType}
+                  value={rangeValues[field.path]?.[0] ?? ''}
+                  onChange={(event) => updateRangeFilter(field, 0, event.target.value)}
+                />
+              </label>
+              <label>
+                <span>{rangeLabels.to}</span>
+                <input
+                  type={field.inputType}
+                  value={rangeValues[field.path]?.[1] ?? ''}
+                  onChange={(event) => updateRangeFilter(field, 1, event.target.value)}
+                />
+              </label>
+            </div>
+          ) : (
+            <input
+              id={field.id}
+              type="text"
+              value={textValues[field.path] ?? ''}
+              onChange={(event) => updateTextFilter(field.path, event.target.value)}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function FileTable({ apiToken, files, isLoading, onSelectFile, resource, selectedFilePath, service }) {
@@ -1434,10 +1079,12 @@ function FileTable({ apiToken, files, isLoading, onSelectFile, resource, selecte
   );
 }
 
-function FilePreview({ apiToken, file, resource, service }) {
+function FilePreview({ apiToken, file, profile, resource, selectedLanguage, service }) {
   const text = useAppText();
   const [previewState, setPreviewState] = useState({
+    csvRows: [],
     error: '',
+    isTruncated: false,
     isLoading: false,
     kind: 'empty',
     objectUrl: '',
@@ -1445,6 +1092,10 @@ function FilePreview({ apiToken, file, resource, service }) {
     type: '',
   });
   const path = searchFilePath(file);
+  const metadataRows = useMemo(
+    () => buildFileMetadataRows(file?.metadata, profile?.shapes, selectedLanguage),
+    [file?.metadata, profile?.shapes, selectedLanguage],
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -1452,7 +1103,9 @@ function FilePreview({ apiToken, file, resource, service }) {
 
     if (!file) {
       setPreviewState({
+        csvRows: [],
         error: '',
+        isTruncated: false,
         isLoading: false,
         kind: 'empty',
         objectUrl: '',
@@ -1463,7 +1116,9 @@ function FilePreview({ apiToken, file, resource, service }) {
     }
 
     setPreviewState({
+      csvRows: [],
       error: '',
+      isTruncated: false,
       isLoading: true,
       kind: 'loading',
       objectUrl: '',
@@ -1480,15 +1135,24 @@ function FilePreview({ apiToken, file, resource, service }) {
         const blob = await response.blob();
         const type = blob.type || response.headers.get('content-type') || inferContentTypeFromPath(path);
         const kind = getPreviewKind(type, path);
-        objectUrl = URL.createObjectURL(blob);
-        const text = kind === 'text' ? await blob.text() : '';
-
+        objectUrl = kind === 'image' || kind === 'pdf' ? URL.createObjectURL(blob) : '';
+        const needsText = kind === 'text' || kind === 'csv';
+        const isByteTruncated = needsText && blob.size > MAX_TEXT_PREVIEW_BYTES;
+        const previewBlob = isByteTruncated ? blob.slice(0, MAX_TEXT_PREVIEW_BYTES) : blob;
+        const rawText = needsText ? await previewBlob.text() : '';
+        const csvPreview = kind === 'csv' ? parseCsvPreview(rawText) : null;
+        const isTruncated = isByteTruncated || Boolean(csvPreview?.isTruncated);
+        const text = kind === 'text'
+          ? `${rawText}${isTruncated ? '\n\n… Preview truncated.' : ''}`
+          : '';
         if (!isActive) {
           return;
         }
 
         setPreviewState({
+          csvRows: csvPreview?.rows ?? [],
           error: '',
+          isTruncated,
           isLoading: false,
           kind,
           objectUrl,
@@ -1502,7 +1166,9 @@ function FilePreview({ apiToken, file, resource, service }) {
         }
 
         setPreviewState({
+          csvRows: [],
           error: previewError.message || 'Could not load the file preview.',
+          isTruncated: false,
           isLoading: false,
           kind: 'error',
           objectUrl: '',
@@ -1552,6 +1218,9 @@ function FilePreview({ apiToken, file, resource, service }) {
       {previewState.kind === 'text' ? (
         <pre className="file-preview-text">{previewState.text || 'The file is empty.'}</pre>
       ) : null}
+      {previewState.kind === 'csv' ? (
+        <CsvPreviewTable rows={previewState.csvRows} isTruncated={previewState.isTruncated} />
+      ) : null}
       {previewState.kind === 'unsupported' ? (
         <dl className="upload-facts upload-facts-compact">
           <div>
@@ -1563,6 +1232,24 @@ function FilePreview({ apiToken, file, resource, service }) {
             <dd>{previewState.type || 'Unknown'}</dd>
           </div>
         </dl>
+      ) : null}
+
+      {file ? (
+        <section className="file-metadata">
+          <h4>Metadata</h4>
+          {metadataRows.length ? (
+            <dl className="file-metadata__list">
+              {metadataRows.map((row) => (
+                <div key={row.path}>
+                  <dt title={row.path}>{row.label}</dt>
+                  <dd>{row.values.join(', ')}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="muted">No readable Coscine metadata is available for this file.</p>
+          )}
+        </section>
       ) : null}
     </section>
   );
@@ -1591,6 +1278,124 @@ async function downloadSearchFile({ apiToken, file, resource, service }) {
   }
 }
 
+function CsvPreviewTable({ rows, isTruncated }) {
+  if (!rows.length) {
+    return <div className="empty-state">The CSV file is empty.</div>;
+  }
+
+  const [header, ...body] = rows;
+
+  return (
+    <div className="csv-preview">
+      <div className="csv-preview__summary">
+        <span>{body.length} preview row{body.length === 1 ? '' : 's'}</span>
+        {isTruncated ? <span>Preview truncated</span> : null}
+      </div>
+      <div className="csv-preview__scroll">
+        <table>
+          <thead>
+            <tr>
+              {header.map((cell, index) => (
+                <th key={`header-${index}`} title={cell}>{cell || `Column ${index + 1}`}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {body.map((row, rowIndex) => (
+              <tr key={`row-${rowIndex}`}>
+                {header.map((_, columnIndex) => {
+                  const cell = row[columnIndex] ?? '';
+                  return <td key={`cell-${rowIndex}-${columnIndex}`} title={cell}>{cell}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function parseCsvPreview(text) {
+  const delimiter = detectCsvDelimiter(text);
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  let index = 0;
+  let isTruncated = false;
+
+  const pushField = () => {
+    if (row.length < MAX_CSV_PREVIEW_COLUMNS) {
+      row.push(field.trim());
+    } else {
+      isTruncated = true;
+    }
+    field = '';
+  };
+  const pushRow = () => {
+    pushField();
+    if (row.some((value) => value !== '')) {
+      rows.push(row);
+    }
+    row = [];
+  };
+
+  while (index < text.length && rows.length < MAX_CSV_PREVIEW_ROWS + 1) {
+    const character = text[index];
+
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') {
+        field += '"';
+        index += 2;
+        continue;
+      }
+      quoted = !quoted;
+    } else if (character === delimiter && !quoted) {
+      pushField();
+    } else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && text[index + 1] === '\n') {
+        index += 1;
+      }
+      pushRow();
+    } else {
+      field += character;
+    }
+
+    index += 1;
+  }
+
+  if ((field || row.length) && rows.length < MAX_CSV_PREVIEW_ROWS + 1) {
+    pushRow();
+  }
+
+  if (index < text.length || rows.length > MAX_CSV_PREVIEW_ROWS + 1) {
+    isTruncated = true;
+  }
+
+  return {
+    isTruncated,
+    rows: rows.slice(0, MAX_CSV_PREVIEW_ROWS + 1),
+  };
+}
+
+function detectCsvDelimiter(text) {
+  const sampleLine = String(text ?? '').split(/\r?\n/, 1)[0] ?? '';
+  const candidates = [',', ';', '\t', '|'];
+  let selected = ',';
+  let selectedCount = -1;
+
+  for (const candidate of candidates) {
+    const count = sampleLine.split(candidate).length - 1;
+    if (count > selectedCount) {
+      selected = candidate;
+      selectedCount = count;
+    }
+  }
+
+  return selected;
+}
+
 function getPreviewKind(contentType, path) {
   const normalizedType = String(contentType ?? '').split(';')[0].trim().toLowerCase();
   const normalizedPath = String(path ?? '').toLowerCase();
@@ -1601,6 +1406,10 @@ function getPreviewKind(contentType, path) {
 
   if (normalizedType === 'application/pdf' || normalizedPath.endsWith('.pdf')) {
     return 'pdf';
+  }
+
+  if (normalizedType === 'text/csv' || normalizedPath.endsWith('.csv')) {
+    return 'csv';
   }
 
   if (
@@ -1654,19 +1463,27 @@ function filterFiles(files, filterRdf) {
     const haystack = `${file.path ?? ''}\n${JSON.stringify(file.metadata ?? '')}`.toLowerCase();
 
     return filters.every(({ path, value }) => {
+      const terms = splitTextFilterTerms(value);
+
       if (!path) {
-        return haystack.includes(value);
+        return terms.every((term) => haystack.includes(term));
       }
 
-      const values = metadataValues.get(path) ?? [];
+      const values = findTextMetadataValues(metadataValues, path);
 
-      if (!values.length) {
-        return true;
-      }
-
-      return values.some((metadataValue) => metadataValue.includes(value));
+      return terms.every((term) => values.some((metadataValue) => metadataValue.includes(term)));
     });
   });
+}
+
+function splitTextFilterTerms(value) {
+  return Array.from(
+    new Set(
+      normalizeTextFilterValue(value)
+        .split(/\s+/)
+        .filter(Boolean),
+    ),
+  );
 }
 
 function parseFieldFilters(filterText) {
@@ -1681,7 +1498,7 @@ function parseFieldFilters(filterText) {
         .filter((entry) => entry?.path && entry?.value !== undefined)
         .map((entry) => ({
           path: entry.path,
-          value: String(entry.value).trim().toLowerCase(),
+          value: normalizeTextFilterValue(entry.value),
         }))
         .filter((entry) => entry.value !== '');
     }
@@ -1690,6 +1507,25 @@ function parseFieldFilters(filterText) {
   }
 
   return [];
+}
+
+function normalizeTextFilterValue(value) {
+  return String(value ?? '').trim().replace(/^<|>$/g, '').toLowerCase();
+}
+
+function findTextMetadataValues(valueMap, fieldPath) {
+  const directValues = valueMap.get(fieldPath);
+
+  if (directValues) {
+    return directValues;
+  }
+
+  const normalizedFieldPath = normalizeRangePath(fieldPath);
+  const matchingEntries = Array.from(valueMap.entries()).filter(
+    ([metadataPath]) => normalizeRangePath(metadataPath) === normalizedFieldPath,
+  );
+
+  return matchingEntries.length === 1 ? matchingEntries[0][1] : [];
 }
 
 function collectSearchFormFilterText(formElement, dirtyPaths = null) {
@@ -1742,18 +1578,34 @@ function applyRangeFilters(files, filters) {
     const valueMap = extractRangeMetadataValueMap(file.metadata);
 
     return activeFilters.every(([path, [min, max]]) => {
-      const values = valueMap.get(path) ?? [];
-
-      if (!values.length) {
-        return true;
-      }
+      const values = findRangeMetadataValues(valueMap, path);
 
       return values.some((value) => Number.isFinite(value) && value >= min && value <= max);
     });
   });
 }
 
-function enhanceRangeFields(formElement, onRangeFiltersChange, numericRangeStats = new Map()) {
+function findRangeMetadataValues(valueMap, fieldPath) {
+  const directValues = valueMap.get(fieldPath);
+
+  if (directValues) {
+    return directValues;
+  }
+
+  const normalizedFieldPath = normalizeRangePath(fieldPath);
+  const matchingEntries = Array.from(valueMap.entries()).filter(
+    ([metadataPath]) => normalizeRangePath(metadataPath) === normalizedFieldPath,
+  );
+
+  return matchingEntries.length === 1 ? matchingEntries[0][1] : [];
+}
+
+function enhanceRangeFields(
+  formElement,
+  onRangeFiltersChange,
+  numericRangeStats = new Map(),
+  rangeLabels = getRangeLabels(),
+) {
   const root = formElement.shadowRoot ?? formElement;
   ensureRangeFieldStyles(root);
   const editors = Array.from(root.querySelectorAll('.property-instance[data-path] .editor')).filter((editor) =>
@@ -1773,7 +1625,9 @@ function enhanceRangeFields(formElement, onRangeFiltersChange, numericRangeStats
       continue;
     }
 
-    const rangeStats = numericRangeStats.get(path);
+    field.classList.add('metadata-range-field');
+
+    const rangeStats = findNumericRangeStats(numericRangeStats, path);
 
     editor.dataset.rangeEnhanced = 'true';
     editor.dataset.rangeRole = 'min';
@@ -1785,31 +1639,74 @@ function enhanceRangeFields(formElement, onRangeFiltersChange, numericRangeStats
         max: rangeStats.max,
         min: rangeStats.min,
         onRangeFiltersChange,
-        path,
+        path: rangeStats.path,
+        rangeLabels,
       });
       continue;
     }
 
     const wrapper = document.createElement('div');
     wrapper.className = 'metadata-range-inline';
+    const inputType = getRangeInputType(editor);
+    const originalDisplay = editor.style.display;
+    editor.style.display = 'none';
+    editor.dataset.rangeOriginalDisplay = originalDisplay;
+
+    const fromControl = document.createElement('label');
+    fromControl.className = 'metadata-range-inline__control';
+    fromControl.textContent = rangeLabels.from;
+
+    const fromInput = document.createElement('input');
+    fromInput.className = 'metadata-range-inline__input';
+    fromInput.type = inputType;
+    fromInput.step = editor.step || (inputType === 'number' ? 'any' : '1');
+    fromInput.min = editor.min || '';
+    fromInput.max = editor.max || '';
+    fromInput.placeholder = rangeLabels.from;
+    fromInput.dataset.rangeRole = 'min';
+    fromInput.dataset.path = path;
+    fromInput.setAttribute('aria-label', rangeLabels.from);
+    fromControl.appendChild(fromInput);
+
+    const toControl = document.createElement('label');
+    toControl.className = 'metadata-range-inline__control';
+    toControl.textContent = rangeLabels.to;
 
     const toInput = document.createElement('input');
-    toInput.className = 'editor metadata-range-inline__to';
-    toInput.type = getRangeInputType(editor);
-    toInput.step = editor.step || (toInput.type === 'number' ? 'any' : '1');
+    toInput.className = 'metadata-range-inline__input';
+    toInput.type = inputType;
+    toInput.step = editor.step || (inputType === 'number' ? 'any' : '1');
     toInput.min = editor.min || '';
     toInput.max = editor.max || '';
-    toInput.placeholder = 'to';
+    toInput.placeholder = rangeLabels.to;
     toInput.dataset.rangeRole = 'max';
     toInput.dataset.path = path;
-    toInput.setAttribute('aria-label', 'Range end');
+    toInput.setAttribute('aria-label', rangeLabels.to);
+    toControl.appendChild(toInput);
+
+    if (
+      (inputType === 'date' || inputType === 'datetime-local') &&
+      rangeStats?.count > 0 &&
+      rangeStats.min <= rangeStats.max
+    ) {
+      const proposedMin = rangeValueToFormInput(rangeStats.min, inputType);
+      const proposedMax = rangeValueToFormInput(rangeStats.max, inputType);
+
+      fromInput.value = proposedMin;
+      fromInput.min = proposedMin;
+      fromInput.max = proposedMax;
+      toInput.value = proposedMax;
+      toInput.min = proposedMin;
+      toInput.max = proposedMax;
+    }
 
     editor.parentNode.insertBefore(wrapper, editor);
     wrapper.appendChild(editor);
-    wrapper.appendChild(toInput);
+    wrapper.appendChild(fromControl);
+    wrapper.appendChild(toControl);
 
     const publishRange = () => {
-      const min = formInputToRangeValue(editor);
+      const min = formInputToRangeValue(fromInput);
       const max = formInputToRangeValue(toInput);
 
       onRangeFiltersChange((currentFilters) => {
@@ -1829,14 +1726,22 @@ function enhanceRangeFields(formElement, onRangeFiltersChange, numericRangeStats
       formElement.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     };
 
-    editor.addEventListener('input', publishRange);
-    editor.addEventListener('change', publishRange);
+    fromInput.addEventListener('input', publishRange);
+    fromInput.addEventListener('change', publishRange);
     toInput.addEventListener('input', publishRange);
     toInput.addEventListener('change', publishRange);
   }
 }
 
-function enhanceNumericSliderRangeField({ editor, formElement, max, min, onRangeFiltersChange, path }) {
+function enhanceNumericSliderRangeField({
+  editor,
+  formElement,
+  max,
+  min,
+  onRangeFiltersChange,
+  path,
+  rangeLabels,
+}) {
   const wrapper = document.createElement('div');
   wrapper.className = 'metadata-slider-filter';
 
@@ -1847,19 +1752,41 @@ function enhanceNumericSliderRangeField({ editor, formElement, max, min, onRange
   wrapper.appendChild(editor);
 
   if (min === max) {
-    const onlyValue = document.createElement('div');
+    hideSingleValueRangeAddControl(editor);
+    const onlyValue = document.createElement('input');
     onlyValue.className = 'metadata-slider-filter__single-value';
-    onlyValue.textContent = `Only one value: ${formatSliderValue(min)}`;
+    onlyValue.type = 'text';
+    onlyValue.value = formatSliderValue(min);
+    onlyValue.readOnly = true;
+    onlyValue.setAttribute('aria-label', onlyValue.value);
+    onlyValue.title = rangeLabels.onlyValueHint;
+
     wrapper.appendChild(onlyValue);
+    onRangeFiltersChange((currentFilters) => {
+      const currentRange = currentFilters[path];
+
+      if (currentRange?.[0] === min && currentRange?.[1] === max) {
+        return currentFilters;
+      }
+
+      return {
+        ...currentFilters,
+        [path]: [min, max],
+      };
+    });
     return;
   }
 
-  const sliderGrid = document.createElement('div');
-  sliderGrid.className = 'metadata-slider-filter__grid';
+  const sliderValues = document.createElement('div');
+  sliderValues.className = 'metadata-slider-filter__grid';
 
   const minLabel = document.createElement('label');
   minLabel.className = 'metadata-slider-filter__label';
-  minLabel.textContent = 'Min';
+  minLabel.textContent = rangeLabels.from;
+
+  const minValue = document.createElement('output');
+  minValue.className = 'metadata-slider-filter__value';
+  minLabel.appendChild(minValue);
 
   const minSlider = document.createElement('input');
   minSlider.className = 'metadata-slider-filter__input';
@@ -1868,14 +1795,17 @@ function enhanceNumericSliderRangeField({ editor, formElement, max, min, onRange
   minSlider.max = String(max);
   minSlider.step = getNumericSliderStep(editor);
   minSlider.value = String(min);
+  minSlider.setAttribute('orient', 'horizontal');
   minSlider.dataset.path = path;
   minSlider.dataset.rangeRole = 'min';
-  minSlider.setAttribute('aria-label', 'Minimum value');
-  minLabel.appendChild(minSlider);
-
+  minSlider.setAttribute('aria-label', rangeLabels.from);
   const maxLabel = document.createElement('label');
   maxLabel.className = 'metadata-slider-filter__label';
-  maxLabel.textContent = 'Max';
+  maxLabel.textContent = rangeLabels.to;
+
+  const maxValue = document.createElement('output');
+  maxValue.className = 'metadata-slider-filter__value';
+  maxLabel.appendChild(maxValue);
 
   const maxSlider = document.createElement('input');
   maxSlider.className = 'metadata-slider-filter__input';
@@ -1884,17 +1814,26 @@ function enhanceNumericSliderRangeField({ editor, formElement, max, min, onRange
   maxSlider.max = String(max);
   maxSlider.step = minSlider.step;
   maxSlider.value = String(max);
+  maxSlider.setAttribute('orient', 'horizontal');
   maxSlider.dataset.path = path;
   maxSlider.dataset.rangeRole = 'max';
-  maxSlider.setAttribute('aria-label', 'Maximum value');
-  maxLabel.appendChild(maxSlider);
+  maxSlider.setAttribute('aria-label', rangeLabels.to);
+
+  const sliderRail = document.createElement('div');
+  sliderRail.className = 'metadata-slider-filter__rail';
+  const selectedRail = document.createElement('div');
+  selectedRail.className = 'metadata-slider-filter__selected-rail';
+  sliderRail.appendChild(selectedRail);
+  sliderRail.appendChild(minSlider);
+  sliderRail.appendChild(maxSlider);
 
   const valueLine = document.createElement('div');
   valueLine.className = 'metadata-slider-filter__values';
 
-  wrapper.appendChild(sliderGrid);
-  sliderGrid.appendChild(minLabel);
-  sliderGrid.appendChild(maxLabel);
+  wrapper.appendChild(sliderValues);
+  sliderValues.appendChild(minLabel);
+  sliderValues.appendChild(maxLabel);
+  wrapper.appendChild(sliderRail);
   wrapper.appendChild(valueLine);
 
   const publishRange = () => {
@@ -1911,7 +1850,16 @@ function enhanceNumericSliderRangeField({ editor, formElement, max, min, onRange
       }
     }
 
-    valueLine.textContent = `${formatSliderValue(min)} to ${formatSliderValue(max)} | Selected: ${formatSliderValue(selectedMin)} to ${formatSliderValue(selectedMax)}`;
+    const rangeWidth = max - min;
+    const selectedStart = ((selectedMin - min) / rangeWidth) * 100;
+    const selectedEnd = ((selectedMax - min) / rangeWidth) * 100;
+    minValue.value = formatSliderValue(selectedMin);
+    minValue.textContent = minValue.value;
+    maxValue.value = formatSliderValue(selectedMax);
+    maxValue.textContent = maxValue.value;
+    selectedRail.style.left = `${selectedStart}%`;
+    selectedRail.style.width = `${selectedEnd - selectedStart}%`;
+    valueLine.textContent = `${rangeLabels.available}: ${formatSliderValue(min)} ${rangeLabels.to.toLowerCase()} ${formatSliderValue(max)} · ${rangeLabels.selected}: ${formatSliderValue(selectedMin)} ${rangeLabels.to.toLowerCase()} ${formatSliderValue(selectedMax)}`;
 
     onRangeFiltersChange((currentFilters) => {
       const nextFilters = { ...currentFilters };
@@ -1934,6 +1882,32 @@ function enhanceNumericSliderRangeField({ editor, formElement, max, min, onRange
   publishRange();
 }
 
+function hideSingleValueRangeAddControl(editor) {
+  const property = editor.closest('shacl-property');
+
+  if (!property) {
+    return;
+  }
+
+  const hideControls = () => {
+    for (const control of property.querySelectorAll(':scope > .add-button-wrapper, :scope > [part~="add-controls"]')) {
+      control.hidden = true;
+      control.dataset.singleValueRangeControl = 'hidden';
+    }
+  };
+
+  hideControls();
+
+  // The SHACL component adds its controls asynchronously after its editor has
+  // rendered. Observe only its direct, documented add-control wrapper so a
+  // late “+ Add” button cannot reappear for this fixed-value range.
+  if (!editor.singleValueRangeAddControlObserver) {
+    const observer = new MutationObserver(hideControls);
+    observer.observe(property, { childList: true });
+    editor.singleValueRangeAddControlObserver = observer;
+  }
+}
+
 function ensureRangeFieldStyles(root) {
   if (root.querySelector('#coscine-range-field-styles')) {
     return;
@@ -1943,27 +1917,78 @@ function ensureRangeFieldStyles(root) {
   style.id = 'coscine-range-field-styles';
   style.textContent = `
     .metadata-range-inline {
+      align-items: end;
       display: grid;
       grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
       gap: 10px;
       width: 100%;
     }
 
-    .metadata-range-inline::before {
-      content: "from";
-      grid-column: 1;
-      color: #64748b;
-      font-size: 0.75rem;
-      font-weight: 700;
+    /* A date range contains two controls. Put the property label above them
+       so the range can use the complete form row rather than only the space
+       left after the label. */
+    .metadata-range-field {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr);
+      inline-size: 100%;
+      min-inline-size: 0;
     }
 
-    .metadata-range-inline::after {
-      content: "to";
-      grid-column: 2;
-      grid-row: 1;
+    .metadata-range-field > label {
+      inline-size: auto !important;
+      padding-inline-end: 0 !important;
+    }
+
+    .metadata-range-field > .metadata-range-inline,
+    .metadata-range-field > .metadata-slider-filter {
+      min-inline-size: 0;
+      width: 100%;
+    }
+
+    .property-instance .metadata-range-inline__control {
       color: #64748b;
+      display: grid !important;
       font-size: 0.75rem;
       font-weight: 700;
+      gap: 6px;
+      inline-size: 100% !important;
+      line-height: normal;
+      padding: 0 !important;
+      position: static;
+      word-break: normal;
+      white-space: nowrap;
+      writing-mode: horizontal-tb !important;
+    }
+
+    .metadata-range-inline__input {
+      background: #ffffff;
+      border: 1px solid #bdc9d8;
+      border-radius: 6px;
+      box-sizing: border-box;
+      color: #142033;
+      font: inherit;
+      height: 42px;
+      min-width: 0;
+      padding: 9px 11px;
+      width: 100%;
+      writing-mode: horizontal-tb !important;
+    }
+
+    .metadata-range-inline__input:focus {
+      border-color: #0067b1;
+      box-shadow: 0 0 0 3px rgba(0, 103, 177, 0.16);
+      outline: none;
+    }
+
+    .metadata-range-inline__input[type="number"] {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+
+    .metadata-range-inline__input[type="number"]::-webkit-inner-spin-button,
+    .metadata-range-inline__input[type="number"]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
     }
 
     .metadata-slider-filter {
@@ -1975,7 +2000,7 @@ function ensureRangeFieldStyles(root) {
     .metadata-slider-filter__grid {
       display: grid;
       gap: 10px;
-      grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr);
+      grid-template-columns: repeat(2, minmax(4.75rem, 1fr));
     }
 
     .metadata-slider-filter__label {
@@ -1984,11 +2009,83 @@ function ensureRangeFieldStyles(root) {
       font-size: 0.75rem;
       font-weight: 800;
       gap: 6px;
+      min-width: 4.75rem;
       text-transform: uppercase;
+      white-space: nowrap;
+      writing-mode: horizontal-tb !important;
+    }
+
+    .metadata-slider-filter__value {
+      color: #142033;
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-transform: none;
+    }
+
+    .metadata-slider-filter__rail {
+      background: #d8e0ea;
+      border-radius: 999px;
+      height: 8px;
+      margin: 4px 8px;
+      position: relative;
+    }
+
+    .metadata-slider-filter__selected-rail {
+      background: #0067b1;
+      border-radius: inherit;
+      height: 100%;
+      position: absolute;
     }
 
     .metadata-slider-filter__input {
-      width: 100%;
+      appearance: none !important;
+      -webkit-appearance: none !important;
+      background: transparent;
+      cursor: pointer;
+      inset: -8px;
+      margin: 0;
+      pointer-events: none;
+      position: absolute;
+      direction: ltr !important;
+      height: 24px !important;
+      inline-size: 100% !important;
+      min-block-size: 24px !important;
+      min-inline-size: 0 !important;
+      writing-mode: horizontal-tb !important;
+      width: 100% !important;
+    }
+
+    .metadata-slider-filter__input::-webkit-slider-runnable-track {
+      background: transparent;
+      height: 8px;
+    }
+
+    .metadata-slider-filter__input::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      background: #ffffff;
+      border: 2px solid #0067b1;
+      border-radius: 50%;
+      cursor: grab;
+      height: 18px;
+      margin-top: -5px;
+      pointer-events: auto;
+      width: 18px;
+    }
+
+    .metadata-slider-filter__input::-moz-range-track {
+      background: transparent;
+      height: 8px;
+    }
+
+    .metadata-slider-filter__input::-moz-range-thumb {
+      background: #ffffff;
+      border: 2px solid #0067b1;
+      border-radius: 50%;
+      cursor: grab;
+      height: 14px;
+      pointer-events: auto;
+      width: 14px;
     }
 
     .metadata-slider-filter__values {
@@ -1998,16 +2095,154 @@ function ensureRangeFieldStyles(root) {
     }
 
     .metadata-slider-filter__single-value {
-      background: #fef3c7;
-      border: 1px solid #f59e0b;
+      background: #f8fafc;
+      border: 1px solid #bdc9d8;
       border-radius: 6px;
-      color: #78350f;
-      font-size: 0.86rem;
-      font-weight: 800;
-      padding: 8px 10px;
+      box-sizing: border-box;
+      color: #475569;
+      cursor: help;
+      font: inherit;
+      font-weight: 700;
+      height: 42px;
+      padding: 9px 11px;
+      width: 100%;
+    }
+
+  `;
+  root.append(style);
+}
+
+function ensureSearchFormLayoutStyles(root) {
+  if (root.querySelector('#coscine-search-form-layout-styles')) {
+    return;
+  }
+
+  const style = document.createElement('style');
+  style.id = 'coscine-search-form-layout-styles';
+  style.textContent = `
+    .property-instance {
+      gap: 6px;
+    }
+
+    /* Let an editor consume the unused part of its row instead of keeping
+       only its intrinsic width. This is especially important for dates,
+       whose complete value and calendar button need more room. */
+    .property-instance > [part~='field'],
+    .property-instance > .field {
+      display: flex;
+      flex: 1 1 0;
+      margin-inline-end: 4px;
+      max-inline-size: calc(100% - 4px);
+      min-inline-size: 0;
+    }
+
+    .property-instance > .remove-button-wrapper,
+    shacl-property > .add-button-wrapper,
+    shacl-property > .collapsible > .add-button-wrapper {
+      display: none !important;
+    }
+
+    .property-instance > [part~='field'] > .editor:not([type='checkbox']),
+    .property-instance > .field > .editor:not([type='checkbox']),
+    .property-instance > .editor:not([type='checkbox']) {
+      flex: 1 1 0;
+      inline-size: 100%;
+      min-inline-size: 0;
+    }
+
+    .property-instance > [part~='field'] > .editor[type='date'],
+    .property-instance > [part~='field'] > .editor[type='datetime-local'],
+    .property-instance > .field > .editor[type='date'],
+    .property-instance > .field > .editor[type='datetime-local'],
+    .property-instance > .editor[type='date'],
+    .property-instance > .editor[type='datetime-local'] {
+      min-inline-size: min(12rem, 100%);
+    }
+
+    .metadata-single-option-value {
+      align-self: stretch;
+      background: #f1f5f9;
+      border: 1px solid #bdc9d8;
+      border-radius: 6px;
+      color: #475569;
+      flex: 1 1 0;
+      font: inherit;
+      inline-size: 100%;
+      min-block-size: 36px;
+      min-inline-size: 0;
+      padding: 7px 10px;
+    }
+
+    rokit-select.editor[data-single-value-replaced='true'] {
+      display: none !important;
     }
   `;
-  root.prepend(style);
+  root.append(style);
+}
+
+function replaceSingleValueDropdowns(formElement, observedMetadataValues) {
+  const root = formElement.shadowRoot ?? formElement;
+  const editors = Array.from(root.querySelectorAll('.property-instance[data-path] rokit-select.editor'));
+
+  for (const editor of editors) {
+    if (editor.dataset.singleValueReplaced === 'true') {
+      continue;
+    }
+
+    const propertyInstance = editor.closest('.property-instance[data-path]');
+    const path = propertyInstance?.dataset.path;
+    const observedValues = observedMetadataValues.get(path);
+
+    if (!path || observedValues?.size !== 1) {
+      continue;
+    }
+
+    const onlyValue = observedValues.values().next().value;
+    const normalizedOnlyValue = String(onlyValue).replace(/^<|>$/g, '');
+    const options = Array.from(editor.querySelectorAll('li[data-value]'));
+    const matchingOption = options.find((option) => {
+      const optionValue = String(option.dataset.value ?? '').replace(/^<|>$/g, '');
+      return optionValue === normalizedOnlyValue;
+    });
+    const optionLabel = Array.from(matchingOption?.childNodes ?? [])
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent?.trim())
+      .filter(Boolean)
+      .join(' ');
+    const displayValue = isMetadataUri(optionLabel)
+      ? compactMetadataUri(optionLabel)
+      : optionLabel || compactMetadataUri(normalizedOnlyValue);
+    const readOnlyValue = document.createElement('input');
+    readOnlyValue.className = 'metadata-single-option-value';
+    readOnlyValue.type = 'text';
+    readOnlyValue.value = displayValue;
+    readOnlyValue.readOnly = true;
+    readOnlyValue.setAttribute('aria-label', displayValue);
+    readOnlyValue.title = displayValue;
+
+    editor.dataset.singleValueReplaced = 'true';
+    editor.insertAdjacentElement('afterend', readOnlyValue);
+  }
+}
+
+function isMetadataUri(value) {
+  return /^(?:<)?(?:https?:\/\/|urn:)/i.test(String(value ?? '').trim());
+}
+
+function compactMetadataUri(value) {
+  const normalizedValue = String(value ?? '').trim().replace(/^<|>$/g, '');
+  const separatorIndex = Math.max(
+    normalizedValue.lastIndexOf('#'),
+    normalizedValue.lastIndexOf('/'),
+    normalizedValue.lastIndexOf(':'),
+  );
+  const compactValue = separatorIndex >= 0 ? normalizedValue.slice(separatorIndex + 1) : normalizedValue;
+
+  try {
+    return decodeURIComponent(compactValue) || normalizedValue;
+  } catch {
+    return compactValue || normalizedValue;
+  }
 }
 
 function attachLiveFieldListeners(formElement, updateSerialized) {
@@ -2051,6 +2286,17 @@ function formInputToRangeValue(input) {
 
   const numericValue = Number(value);
   return Number.isFinite(numericValue) ? numericValue : Number.NaN;
+}
+
+function rangeValueToFormInput(value, inputType) {
+  const date = new Date(Number(value) * 1000);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const isoValue = date.toISOString();
+  return inputType === 'datetime-local' ? isoValue.slice(0, 19) : isoValue.slice(0, 10);
 }
 
 function getEditorCurrentValue(editor) {
@@ -2140,6 +2386,7 @@ function buildNumericRangeStats(files) {
           count: 0,
           max: Number.NEGATIVE_INFINITY,
           min: Number.POSITIVE_INFINITY,
+          path,
         };
         current.count += 1;
         current.min = Math.min(current.min, value);
@@ -2152,8 +2399,214 @@ function buildNumericRangeStats(files) {
   return stats;
 }
 
+function buildObservedMetadataValueMap(files) {
+  const valuesByPath = new Map();
+  const addValue = (path, value) => {
+    const normalizedPath = String(path ?? '').trim();
+    const normalizedValue = String(value ?? '').trim();
+
+    if (!normalizedPath || !normalizedValue || normalizedPath.startsWith('@')) {
+      return;
+    }
+
+    const values = valuesByPath.get(normalizedPath) ?? new Set();
+    values.add(normalizedValue);
+    valuesByPath.set(normalizedPath, values);
+  };
+
+  for (const file of files ?? []) {
+    const json = extractJsonLdMetadata(file.metadata);
+
+    if (json) {
+      for (const node of Array.isArray(json) ? json : [json]) {
+        if (!node || typeof node !== 'object') {
+          continue;
+        }
+
+        for (const [path, rawValues] of Object.entries(node)) {
+          for (const rawValue of Array.isArray(rawValues) ? rawValues : [rawValues]) {
+            addValue(path, typeof rawValue === 'object' ? rawValue?.['@value'] ?? rawValue?.['@id'] : rawValue);
+          }
+        }
+      }
+      continue;
+    }
+
+    try {
+      for (const item of parseRdfMetadataQuads(file.metadata)) {
+        if (item.object.termType === 'Literal' || item.object.termType === 'NamedNode') {
+          addValue(item.predicate.value, item.object.value);
+        }
+      }
+    } catch {
+      // Keep values from the remaining files when one metadata graph is malformed.
+    }
+  }
+
+  return valuesByPath;
+}
+
+function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeStats, preferredLanguage) {
+  if (!shapes) {
+    return [];
+  }
+
+  try {
+    const quads = new Parser({ format: 'text/turtle' }).parse(shapes);
+    const propertyShapes = quads
+      .filter((item) => item.predicate.value === SH_PATH && item.object.termType === 'NamedNode')
+      .map((item) => item.subject);
+    const seenPaths = new Set();
+    const fields = [];
+
+    for (const propertyShape of propertyShapes) {
+      const path = getFirstQuadObjectValue(quads, propertyShape, SH_PATH);
+
+      if (!path || seenPaths.has(path)) {
+        continue;
+      }
+
+      seenPaths.add(path);
+      const observedValues = findObservedMetadataValues(observedMetadataValues, path);
+
+      // A filter that cannot match any file has no useful meaning.
+      if (!observedValues.length) {
+        continue;
+      }
+
+      const datatype = getFirstQuadObjectValue(quads, propertyShape, SH_DATATYPE);
+      const label = getPreferredQuadLiteral(quads, propertyShape, SH_NAME, preferredLanguage)
+        || findFieldLabelFromPath(path);
+      const description = getPreferredQuadLiteral(quads, propertyShape, SH_DESCRIPTION, preferredLanguage);
+      const isChoice = quads.some(
+        (item) =>
+          item.subject.equals(propertyShape) &&
+          (item.predicate.value === SH_CLASS || item.predicate.value === SH_IN),
+      );
+      const isDate = datatype.endsWith('#date') || datatype.endsWith('#dateTime');
+      const isNumeric = ['#integer', '#float', '#double', '#decimal'].some((suffix) =>
+        datatype.endsWith(suffix),
+      );
+      const rangeStats = findNumericRangeStats(numericRangeStats, path);
+      const id = `search-field-${fields.length}`;
+
+      if ((isDate || isNumeric) && rangeStats?.count > 0) {
+        if (rangeStats.min === rangeStats.max) {
+          fields.push({
+            description,
+            displayValue: isDate
+              ? rangeValueToFormInput(rangeStats.min, datatype.endsWith('#dateTime') ? 'datetime-local' : 'date')
+              : String(rangeStats.min),
+            id,
+            kind: 'readonly',
+            label,
+            path,
+          });
+          continue;
+        }
+
+        const inputType = isDate
+          ? datatype.endsWith('#dateTime') ? 'datetime-local' : 'date'
+          : 'number';
+        fields.push({
+          description,
+          id,
+          inputType,
+          kind: 'range',
+          label,
+          path,
+          proposedMax: isDate ? rangeValueToFormInput(rangeStats.max, inputType) : String(rangeStats.max),
+          proposedMin: isDate ? rangeValueToFormInput(rangeStats.min, inputType) : String(rangeStats.min),
+        });
+        continue;
+      }
+
+      if (isChoice && observedValues.length === 1) {
+        fields.push({
+          description,
+          displayValue: compactMetadataUri(observedValues[0]),
+          id,
+          kind: 'readonly',
+          label,
+          path,
+        });
+        continue;
+      }
+
+      fields.push({
+        description,
+        id,
+        kind: isChoice ? 'select' : 'text',
+        label,
+        path,
+        values: observedValues,
+      });
+    }
+
+    return fields;
+  } catch (error) {
+    return [];
+  }
+}
+
+function findObservedMetadataValues(observedMetadataValues, fieldPath) {
+  const directValues = observedMetadataValues.get(fieldPath);
+
+  if (directValues?.size) {
+    return Array.from(directValues).sort((left, right) => left.localeCompare(right));
+  }
+
+  const normalizedFieldPath = normalizeRangePath(fieldPath);
+  const matches = Array.from(observedMetadataValues.entries()).filter(
+    ([metadataPath, values]) => values.size > 0 && normalizeRangePath(metadataPath) === normalizedFieldPath,
+  );
+
+  return matches.length === 1
+    ? Array.from(matches[0][1]).sort((left, right) => left.localeCompare(right))
+    : [];
+}
+
+function findNumericRangeStats(stats, fieldPath) {
+  const directMatch = stats.get(fieldPath);
+
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const normalizedFieldPath = normalizeRangePath(fieldPath);
+  const matches = Array.from(stats.entries()).filter(([metadataPath]) =>
+    normalizeRangePath(metadataPath) === normalizedFieldPath,
+  );
+
+  return matches.length === 1 ? matches[0][1] : undefined;
+}
+
+function normalizeRangePath(path) {
+  const value = String(path ?? '').trim().replace(/^<|>$/g, '');
+  const separatorIndex = Math.max(value.lastIndexOf('#'), value.lastIndexOf('/'), value.lastIndexOf(':'));
+  return (separatorIndex >= 0 ? value.slice(separatorIndex + 1) : value).toLowerCase();
+}
+
 function formatSliderValue(value) {
   return Number.isInteger(value) ? String(value) : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function getRangeLabels(language = 'en') {
+  return language === 'de'
+    ? {
+        available: 'Verfuegbar',
+        from: 'Von',
+        onlyValueHint: 'Dies ist der einzige gefundene Wert.',
+        selected: 'Ausgewaehlt',
+        to: 'Bis',
+      }
+    : {
+        available: 'Available',
+        from: 'From',
+        onlyValueHint: 'This is the only value found.',
+        selected: 'Selected',
+        to: 'To',
+      };
 }
 
 function extractTextMetadataValueMap(metadata) {
@@ -2161,6 +2614,23 @@ function extractTextMetadataValueMap(metadata) {
   const valueMap = new Map();
 
   if (!json) {
+    for (const item of parseRdfMetadataQuads(metadata)) {
+      if (item.object.termType !== 'Literal' && item.object.termType !== 'NamedNode') {
+        continue;
+      }
+
+      const normalizedLiteral = normalizeTextFilterValue(item.object.value);
+
+      if (normalizedLiteral !== '') {
+        const currentValues = valueMap.get(item.predicate.value) ?? [];
+        currentValues.push(normalizedLiteral);
+        if (item.object.termType === 'NamedNode') {
+          currentValues.push(normalizeTextFilterValue(findFieldLabelFromPath(item.object.value)));
+        }
+        valueMap.set(item.predicate.value, currentValues);
+      }
+    }
+
     return valueMap;
   }
 
@@ -2178,12 +2648,15 @@ function extractTextMetadataValueMap(metadata) {
 
       const values = Array.isArray(rawValues) ? rawValues : [rawValues];
       for (const rawValue of values) {
-        const literal = typeof rawValue === 'object' ? rawValue?.['@value'] : rawValue;
-        const normalizedLiteral = String(literal ?? '').trim().toLowerCase();
+        const literal = typeof rawValue === 'object' ? rawValue?.['@value'] ?? rawValue?.['@id'] : rawValue;
+        const normalizedLiteral = normalizeTextFilterValue(literal);
 
         if (normalizedLiteral !== '') {
           const currentValues = valueMap.get(predicate) ?? [];
           currentValues.push(normalizedLiteral);
+          if (typeof rawValue === 'object' && rawValue?.['@id']) {
+            currentValues.push(normalizeTextFilterValue(findFieldLabelFromPath(rawValue['@id'])));
+          }
           valueMap.set(predicate, currentValues);
         }
       }
@@ -2191,6 +2664,96 @@ function extractTextMetadataValueMap(metadata) {
   }
 
   return valueMap;
+}
+
+function buildFileMetadataRows(metadata, shapes, preferredLanguage = 'en') {
+  const rows = new Map();
+  const labelsByPath = collectShapeLabelsByPath(shapes, preferredLanguage);
+  const addValue = (path, value) => {
+    const normalizedPath = String(path ?? '').trim();
+    const normalizedValue = String(value ?? '').trim();
+
+    if (!normalizedPath || !normalizedValue || normalizedPath === RDF_TYPE || normalizedPath === DCTERMS_CONFORMS_TO) {
+      return;
+    }
+
+    const row = rows.get(normalizedPath) ?? {
+      label: labelsByPath.get(normalizedPath) || findFieldLabelFromPath(normalizedPath),
+      path: normalizedPath,
+      values: [],
+    };
+
+    if (!row.values.includes(normalizedValue)) {
+      row.values.push(normalizedValue);
+    }
+
+    rows.set(normalizedPath, row);
+  };
+  const json = extractJsonLdMetadata(metadata);
+
+  if (json) {
+    for (const node of Array.isArray(json) ? json : [json]) {
+      if (!node || typeof node !== 'object') {
+        continue;
+      }
+
+      for (const [path, rawValues] of Object.entries(node)) {
+        if (path.startsWith('@')) {
+          continue;
+        }
+
+        for (const rawValue of Array.isArray(rawValues) ? rawValues : [rawValues]) {
+          addValue(path, typeof rawValue === 'object' ? rawValue?.['@value'] ?? rawValue?.['@id'] : rawValue);
+        }
+      }
+    }
+  } else {
+    try {
+      for (const item of parseRdfMetadataQuads(metadata)) {
+        if (item.object.termType === 'Literal') {
+          addValue(item.predicate.value, item.object.value);
+        } else if (item.object.termType === 'NamedNode') {
+          addValue(item.predicate.value, findFieldLabelFromPath(item.object.value));
+        }
+      }
+    } catch (error) {
+      console.warn('[Coscine metadata] Could not parse metadata for the file details panel.', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return Array.from(rows.values());
+}
+
+function collectShapeLabelsByPath(shapes, preferredLanguage = 'en') {
+  const labelsByPath = new Map();
+
+  if (!shapes || typeof shapes !== 'string') {
+    return labelsByPath;
+  }
+
+  try {
+    const quads = new Parser({ format: 'text/turtle' }).parse(shapes);
+    const propertyShapes = new Set(
+      quads
+        .filter((item) => item.predicate.value === SH_PATH)
+        .map((item) => item.subject),
+    );
+
+    for (const propertyShape of propertyShapes) {
+      const path = getFirstQuadObjectValue(quads, propertyShape, SH_PATH);
+      const label = getPreferredQuadLiteral(quads, propertyShape, SH_NAME, preferredLanguage);
+
+      if (path && label && !labelsByPath.has(path)) {
+        labelsByPath.set(path, label);
+      }
+    }
+  } catch {
+    // A missing label is not a metadata loading failure; the path-based fallback remains usable.
+  }
+
+  return labelsByPath;
 }
 
 function extractRangeMetadataValueMap(metadata) {
@@ -2232,17 +2795,10 @@ function extractRangeMetadataValueMap(metadata) {
 }
 
 function extractTurtleRangeMetadataValueMap(metadata) {
-  const turtle = extractRdfMetadataString(metadata);
   const valueMap = new Map();
 
-  if (!turtle) {
-    return valueMap;
-  }
-
   try {
-    const quads = new Parser({ format: 'text/turtle' }).parse(turtle);
-
-    for (const item of quads) {
+    for (const item of parseRdfMetadataQuads(metadata)) {
       if (item.object.termType !== 'Literal') {
         continue;
       }
@@ -2260,6 +2816,20 @@ function extractTurtleRangeMetadataValueMap(metadata) {
   }
 
   return valueMap;
+}
+
+function parseRdfMetadataQuads(metadata) {
+  const rdf = extractRdfMetadataString(metadata);
+
+  if (!rdf) {
+    return [];
+  }
+
+  return new Parser({ format: isNQuadsMetadata(rdf) ? 'N-Quads' : 'text/turtle' }).parse(rdf);
+}
+
+function isNQuadsMetadata(rdf) {
+  return /(?:^|\n)\s*(?:<[^>]+>|_:[^\s]+)\s+<[^>]+>\s+[\s\S]*?\s+(?:<[^>]+>|_:[^\s]+)\s+\.\s*(?:\r?\n|$)/.test(rdf);
 }
 
 function extractRdfMetadataString(metadata) {
@@ -2363,6 +2933,82 @@ function searchFilePath(file) {
   return String(file.path ?? file.name ?? file.fileName ?? file.key ?? file.id ?? '');
 }
 
+function buildSearchClassInstanceRdf(files, shapes) {
+  const allQuads = [];
+  const classesByPath = new Map();
+
+  try {
+    const shapeQuads = new Parser({ format: 'text/turtle' }).parse(shapes ?? '');
+    const pathsByShape = new Map();
+
+    for (const item of shapeQuads) {
+      if (item.predicate.value === SH_PATH && item.object.termType === 'NamedNode') {
+        pathsByShape.set(item.subject.id, item.object);
+      }
+    }
+
+    for (const item of shapeQuads) {
+      if (item.predicate.value !== SH_CLASS || item.object.termType !== 'NamedNode') {
+        continue;
+      }
+
+      const path = pathsByShape.get(item.subject.id);
+      if (!path) {
+        continue;
+      }
+
+      const classes = classesByPath.get(path.value) ?? [];
+      classes.push(item.object);
+      classesByPath.set(path.value, classes);
+    }
+  } catch {
+    // The form can still use explicit rdf:type statements from file metadata.
+  }
+
+  for (const [fileIndex, file] of (files ?? []).entries()) {
+    try {
+      const blankNodes = new Map();
+      const rebaseBlankNode = (term) => {
+        if (term.termType !== 'BlankNode') {
+          return term;
+        }
+
+        if (!blankNodes.has(term.value)) {
+          blankNodes.set(term.value, DataFactory.blankNode(`search-${fileIndex}-${term.value}`));
+        }
+
+        return blankNodes.get(term.value);
+      };
+
+      for (const item of parseRdfMetadataQuads(file.metadata)) {
+        allQuads.push(
+          quad(
+            rebaseBlankNode(item.subject),
+            item.predicate,
+            rebaseBlankNode(item.object),
+            rebaseBlankNode(item.graph),
+          ),
+        );
+
+        // Coscine metadata often references a controlled-vocabulary term but
+        // does not repeat that term's rdf:type in every file graph. Add the
+        // type required by the property's SHACL class constraint so the
+        // widget can offer the observed term in its dropdown.
+        if (item.object.termType === 'NamedNode') {
+          for (const classTerm of classesByPath.get(item.predicate.value) ?? []) {
+            allQuads.push(quad(item.object, namedNode(RDF_TYPE), classTerm));
+          }
+        }
+      }
+    } catch {
+      // A malformed metadata graph should not prevent choices from the other
+      // files in the resource from being available.
+    }
+  }
+
+  return allQuads.length ? serializeQuadsSync(allQuads) : '';
+}
+
 function normalizeSearchMetadataForForm(metadata, file) {
   const stableSubject = stableFileSubject(file);
 
@@ -2410,8 +3056,49 @@ function normalizeStringMetadataForForm(metadata, stableSubject) {
     }
   }
 
+  if (isNQuadsMetadata(trimmedMetadata)) {
+    try {
+      return normalizeRdfQuadsForForm(parseRdfMetadataQuads(trimmedMetadata), stableSubject);
+    } catch {
+      // The original metadata remains available for display and filtering even if a form cannot prefill it.
+    }
+  }
+
+  try {
+    const quads = parseRdfMetadataQuads(trimmedMetadata);
+
+    if (quads.some((item) => item.subject.termType === 'BlankNode')) {
+      return normalizeRdfQuadsForForm(quads, stableSubject);
+    }
+  } catch {
+    // Keep the source RDF unchanged when it cannot be parsed here.
+  }
+
   const explicitSubject = inferTurtleSubject(trimmedMetadata);
   return { subject: explicitSubject || stableSubject, values: trimmedMetadata };
+}
+
+function normalizeRdfQuadsForForm(quads, stableSubject) {
+  const rootSubject = findRootMetadataSubject(quads);
+
+  if (!rootSubject) {
+    const values = serializeQuadsSync(quads.map((item) => quad(item.subject, item.predicate, item.object)));
+    return { subject: stableSubject, values };
+  }
+
+  const formSubject = rootSubject.termType === 'BlankNode' ? namedNode(stableSubject) : rootSubject;
+  const normalizedQuads = quads.map((item) =>
+    quad(
+      item.subject.equals(rootSubject) ? formSubject : item.subject,
+      item.predicate,
+      item.object.equals(rootSubject) ? formSubject : item.object,
+    ),
+  );
+
+  return {
+    subject: formSubject.value,
+    values: serializeQuadsSync(normalizedQuads),
+  };
 }
 
 function normalizeJsonLdMetadataForForm(metadata, stableSubject) {
@@ -2694,7 +3381,7 @@ function UploadWorkspace({
   uploadButtonLabel,
 }) {
   const text = useAppText();
-  const canUpload = Boolean(profile?.shapes && selectedFiles.length && metadataValid);
+  const canUpload = Boolean(profile?.shapes && selectedFiles.length);
   const selectedFilesLabel = formatSelectedFilesLabel(selectedFiles);
   const formMemoryContextKey = getFormMemoryContextKey(profile, resource);
   const rememberedMetadataContent = useMemo(
@@ -2912,6 +3599,14 @@ function ShaclFormHost({
     host.replaceChildren();
 
     const formElement = document.createElement('shacl-form');
+    const validateMetadataForSubmission = formElement.validate.bind(formElement);
+    formElement.validate = (ignoreEmptyValues = false) => {
+      if (ignoreEmptyValues) {
+        return Promise.resolve({ conforms: true, results: [] });
+      }
+
+      return validateMetadataForSubmission(false);
+    };
     formElement.setAttribute('data-shapes', sanitizedShapes);
     formElement.setAttribute('data-language', selectedLanguage);
     if (rootShapeSubject) {
@@ -2984,7 +3679,8 @@ function ShaclFormHost({
       );
       attachFieldDescriptionTooltips(formElement, descriptionsByPath);
       saveCurrentRememberedValues();
-      refreshValidity();
+      onMetadataValidChange(false);
+      onMetadataValidationSummaryChange('');
     };
 
     const scheduleValidationIndicatorSync = () => {
@@ -2996,13 +3692,17 @@ function ShaclFormHost({
 
     const handleChange = () => {
       saveCurrentRememberedValues();
-      refreshValidity();
+      onMetadataValidChange(false);
+      onMetadataChange('');
+      onMetadataValidationSummaryChange('');
       scheduleValidationIndicatorSync();
     };
 
     const handleInput = () => {
       saveCurrentRememberedValues();
-      refreshValidity();
+      onMetadataValidChange(false);
+      onMetadataChange('');
+      onMetadataValidationSummaryChange('');
       scheduleValidationIndicatorSync();
     };
 
@@ -3094,11 +3794,11 @@ function sanitizeShapesForForm(shapes) {
     const quads = parser.parse(shapes);
     const filteredQuads = quads
       .filter((item) => {
-        if (item.predicate.value !== OWL_IMPORTS || item.object.termType !== 'NamedNode') {
-          return true;
-        }
-
-        return !isQuadtImportUrl(item.object.value);
+        // Coscine profile imports have already been resolved through the API.
+        // Leaving an owl:imports statement here makes the web component fetch
+        // it independently in the browser, where the public profile endpoint
+        // does not allow cross-origin access.
+        return item.predicate.value !== OWL_IMPORTS;
       })
       .map((item) => normalizeShapeQuad(item));
 
@@ -3143,10 +3843,6 @@ function normalizeShapeQuad(item) {
   }
 
   return item;
-}
-
-function isQuadtImportUrl(value) {
-  return /^https?:\/\/qudt\.org(?:\/|$)/i.test(String(value ?? ''));
 }
 
 function findRootShapeSubject(shapes) {

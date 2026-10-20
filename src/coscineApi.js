@@ -5,6 +5,12 @@ const EMULATOR_STORAGE_KEY = 'coscine-upload:emulator-state:v1';
 const DCTERMS_CONFORMS_TO = 'http://purl.org/dc/terms/conformsTo';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const SH_TARGET_CLASS = 'http://www.w3.org/ns/shacl#targetClass';
+const SH_PROPERTY = 'http://www.w3.org/ns/shacl#property';
+const SH_NODE = 'http://www.w3.org/ns/shacl#node';
+const SH_NODE_SHAPE = 'http://www.w3.org/ns/shacl#NodeShape';
+const SH_QUALIFIED_VALUE_SHAPE = 'http://www.w3.org/ns/shacl#qualifiedValueShape';
+const OWL_IMPORTS = 'http://www.w3.org/2002/07/owl#imports';
+const COSCINE_APPLICATION_PROFILE_URI_PREFIX = 'https://purl.org/coscine/ap/';
 export const COSCINE_ENVIRONMENTS = {
   REAL: 'real',
   TEST: 'test',
@@ -41,10 +47,15 @@ async function parseErrorResponse(response) {
 
   if (contentType.includes('application/json')) {
     const payload = await response.json().catch(() => null);
+    const validationErrors = Object.values(payload?.errors ?? {})
+      .flat()
+      .map((value) => String(value).trim())
+      .filter(Boolean);
     return (
       payload?.title ||
       payload?.message ||
       payload?.detail ||
+      validationErrors.join(' ') ||
       `Coscine request failed with HTTP ${response.status}.`
     );
   }
@@ -331,6 +342,24 @@ function createRealCoscineService() {
   };
 }
 
+function getCoscineResourceTypeName(resource) {
+  const resourceType = resource?.resourceType ?? resource?.type;
+
+  if (typeof resourceType === 'string') {
+    return resourceType;
+  }
+
+  return String(
+    resourceType?.displayName ??
+      resourceType?.name ??
+      resourceType?.label ??
+      resourceType?.id ??
+      resource?.resourceTypeName ??
+      resource?.typeName ??
+      '',
+  );
+}
+
 function createEmulatedCoscineService() {
   function listVirtualResources() {
     return dedupeEmulatorCustomResources(emulatorCustomResources).map((resource) => ({
@@ -338,7 +367,7 @@ function createEmulatedCoscineService() {
       projectName: emulatorCustomProject.displayName,
       resourceId: resource.id,
       resourceName: resource.displayName || resource.name || resource.id,
-      resourceType: resource.type?.displayName || resource.type?.name || '',
+      resourceType: getCoscineResourceTypeName(resource),
       applicationProfileUri: resource.applicationProfile?.uri || '',
       shaclFileName: resource.shaclFileName || '',
       isVirtual: true,
@@ -448,7 +477,7 @@ function createEmulatedCoscineService() {
           projectName: emulatorCustomProject.displayName,
           resourceId: existingResource.id,
           resourceName: existingResource.displayName || existingResource.name || existingResource.id,
-          resourceType: existingResource.type?.displayName || existingResource.type?.name || '',
+          resourceType: getCoscineResourceTypeName(existingResource),
           applicationProfileUri: existingResource.applicationProfile?.uri || '',
           shaclFileName: existingResource.shaclFileName || '',
           isVirtual: true,
@@ -577,7 +606,7 @@ export async function fetchCoscineResourceOptions(apiToken) {
         projectName: project.displayName || project.name || project.slug || project.id,
         resourceId: resource.id,
         resourceName: resource.displayName || resource.name || resource.id,
-        resourceType: resource.type?.displayName || resource.type?.name || '',
+        resourceType: getCoscineResourceTypeName(resource),
         applicationProfileUri: resource.applicationProfile?.uri || '',
       }));
     }),
@@ -596,7 +625,211 @@ export async function fetchCoscineApplicationProfileDefinition(apiToken, profile
     throw new Error('Selected Coscine resource has no application profile URI.');
   }
 
-  const encodedProfileUri = encodeURIComponent(normalizedProfileUri);
+  const rootShapes = await fetchCoscineApplicationProfileRaw(apiToken, normalizedProfileUri);
+  const importedProfiles = await fetchCoscineApplicationProfileImports(apiToken, rootShapes);
+  const shapes = await mergeApplicationProfileShapes(rootShapes, importedProfiles);
+
+  return {
+    baseUri: normalizedProfileUri,
+    name: normalizedProfileUri,
+    shapes,
+  };
+}
+
+async function fetchCoscineApplicationProfileImports(apiToken, rootShapes) {
+  const seenImports = new Set();
+
+  const loadImports = async (shapes) => {
+    const directImports = findCoscineApplicationProfileImports(shapes);
+    const loaded = await Promise.all(
+      directImports.map(async (uri) => {
+        // The same profile can be imported at several depths; fetch each one once.
+        if (seenImports.has(uri)) {
+          return [];
+        }
+
+        seenImports.add(uri);
+
+        try {
+          const importedShapes = await fetchCoscineApplicationProfileRaw(apiToken, uri);
+          return [importedShapes, ...(await loadImports(importedShapes))];
+        } catch (error) {
+          console.warn('[Coscine profile] Could not load imported application profile.', {
+            importUri: uri,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      }),
+    );
+
+    return loaded.flat();
+  };
+
+  return loadImports(rootShapes);
+}
+
+async function mergeApplicationProfileShapes(rootShapes, importedProfiles) {
+  if (!importedProfiles.length) {
+    return rootShapes;
+  }
+
+  const parser = new Parser({ format: 'text/turtle' });
+  const rootQuads = parser.parse(rootShapes);
+  const importedQuadsByProfile = importedProfiles.map((shapes) => parser.parse(shapes));
+
+  // The form renders the resource profile's own root shape: the shape with
+  // sh:targetClass when the profile declares one, otherwise its first
+  // declared sh:NodeShape. Many Coscine profiles only use the latter.
+  const resourceRoot = findProfileRootShape(rootQuads);
+
+  const mergedQuads = rootQuads.filter((item) => item.predicate.value !== OWL_IMPORTS);
+  const importedRootIdsByProfile = [];
+
+  for (const importedQuads of importedQuadsByProfile) {
+    const importedRoots = collectImportedRootIds(importedQuads);
+    importedRootIdsByProfile.push(importedRoots);
+
+    for (const item of importedQuads) {
+      if (item.predicate.value === OWL_IMPORTS) {
+        continue;
+      }
+
+      // Imported profiles supply reusable property shapes. They must not
+      // become a second top-level form that displaces the selected resource
+      // profile, so their own sh:targetClass statements are dropped.
+      if (importedRoots.has(item.subject.id) && item.predicate.value === SH_TARGET_CLASS) {
+        continue;
+      }
+
+      mergedQuads.push(item);
+    }
+  }
+
+  // Shapes reachable from the resource root through sh:property and sh:node
+  // references render their fields on their own. Inlining an imported profile
+  // that is already reachable this way would render its fields twice.
+  const reachableShapeIds = collectReachableShapeIds(mergedQuads, resourceRoot);
+
+  const existingPropertyIds = new Set(
+    rootQuads
+      .filter((item) => item.subject.equals(resourceRoot) && item.predicate.value === SH_PROPERTY)
+      .map((item) => item.object.id),
+  );
+
+  importedQuadsByProfile.forEach((importedQuads, index) => {
+    if (!resourceRoot) {
+      return;
+    }
+
+    for (const importedRootId of importedRootIdsByProfile[index]) {
+      if (reachableShapeIds.has(importedRootId)) {
+        continue;
+      }
+
+      for (const item of importedQuads) {
+        if (
+          item.subject.id === importedRootId &&
+          item.predicate.value === SH_PROPERTY &&
+          !existingPropertyIds.has(item.object.id)
+        ) {
+          mergedQuads.push(quad(resourceRoot, namedNode(SH_PROPERTY), item.object));
+          existingPropertyIds.add(item.object.id);
+        }
+      }
+    }
+  });
+
+  return serializeTurtle(mergedQuads);
+}
+
+function findProfileRootShape(quads) {
+  return (
+    quads.find(
+      (item) => item.predicate.value === SH_TARGET_CLASS && item.subject.termType === 'NamedNode',
+    )?.subject ??
+    quads.find(
+      (item) =>
+        item.predicate.value === RDF_TYPE &&
+        item.object.termType === 'NamedNode' &&
+        item.object.value === SH_NODE_SHAPE &&
+        item.subject.termType === 'NamedNode',
+    )?.subject
+  );
+}
+
+function collectImportedRootIds(importedQuads) {
+  const rootIds = new Set(
+    importedQuads
+      .filter((item) => item.predicate.value === SH_TARGET_CLASS && item.subject.termType === 'NamedNode')
+      .map((item) => item.subject.id),
+  );
+
+  if (!rootIds.size) {
+    // Building-block profiles may declare no sh:targetClass; their root is
+    // the first declared sh:NodeShape.
+    const fallbackRoot = importedQuads.find(
+      (item) =>
+        item.predicate.value === RDF_TYPE &&
+        item.object.termType === 'NamedNode' &&
+        item.object.value === SH_NODE_SHAPE &&
+        item.subject.termType === 'NamedNode',
+    )?.subject;
+
+    if (fallbackRoot) {
+      rootIds.add(fallbackRoot.id);
+    }
+  }
+
+  return rootIds;
+}
+
+function collectReachableShapeIds(quads, rootShape) {
+  const reachableShapeIds = new Set();
+
+  if (!rootShape) {
+    return reachableShapeIds;
+  }
+
+  const quadsBySubject = new Map();
+  for (const item of quads) {
+    const subjectQuads = quadsBySubject.get(item.subject.id) ?? [];
+    subjectQuads.push(item);
+    quadsBySubject.set(item.subject.id, subjectQuads);
+  }
+
+  const visitShape = (shapeId) => {
+    if (reachableShapeIds.has(shapeId)) {
+      return;
+    }
+
+    reachableShapeIds.add(shapeId);
+
+    for (const item of quadsBySubject.get(shapeId) ?? []) {
+      if (item.predicate.value === SH_PROPERTY) {
+        // Property shapes may point at nested node shapes via sh:node or
+        // sh:qualifiedValueShape; the form renders those nested as well.
+        for (const nodeItem of quadsBySubject.get(item.object.id) ?? []) {
+          if (
+            nodeItem.predicate.value === SH_NODE ||
+            nodeItem.predicate.value === SH_QUALIFIED_VALUE_SHAPE
+          ) {
+            visitShape(nodeItem.object.id);
+          }
+        }
+      } else if (item.predicate.value === SH_NODE) {
+        visitShape(item.object.id);
+      }
+    }
+  };
+
+  visitShape(rootShape.id);
+
+  return reachableShapeIds;
+}
+
+async function fetchCoscineApplicationProfileRaw(apiToken, profileUri) {
+  const encodedProfileUri = encodeURIComponent(profileUri);
   const response = await fetch(
     `${COSCINE_API_BASE}/application-profiles/profiles/${encodedProfileUri}/raw`,
     {
@@ -617,11 +850,30 @@ export async function fetchCoscineApplicationProfileDefinition(apiToken, profile
     throw new Error(`Coscine returned an empty profile definition for ${profileUri}.`);
   }
 
-  return {
-    baseUri: normalizedProfileUri,
-    name: normalizedProfileUri,
-    shapes,
-  };
+  return shapes;
+}
+
+function findCoscineApplicationProfileImports(shapes) {
+  try {
+    return Array.from(
+      new Set(
+        new Parser({ format: 'text/turtle' })
+          .parse(shapes)
+          .filter(
+            (item) =>
+              item.predicate.value === OWL_IMPORTS &&
+              item.object.termType === 'NamedNode' &&
+              item.object.value.startsWith(COSCINE_APPLICATION_PROFILE_URI_PREFIX),
+          )
+          .map((item) => item.object.value),
+      ),
+    );
+  } catch (error) {
+    console.warn('[Coscine profile] Could not inspect application-profile imports.', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 }
 
 export async function fetchCoscineResourceDetails(apiToken, { projectId, resourceId }) {
@@ -659,7 +911,7 @@ export async function downloadCoscineFile(apiToken, { projectId, resourceId, pat
 async function fetchCoscineResourceFiles(apiToken, projectId, resourceId) {
   const rootEntries = await fetchCoscineStorageEntries(apiToken, projectId, resourceId, '');
   const files = [];
-  const folders = [...rootEntries];
+  const folders = rootEntries.filter((entry) => isCoscineDirectoryEntry(entry));
   const seenFolders = new Set();
 
   while (folders.length > 0) {
@@ -717,11 +969,33 @@ async function fetchCoscineStorageEntries(apiToken, projectId, resourceId, path)
 }
 
 async function withCoscineMetadata(apiToken, projectId, resourceId, entry, path) {
+  const fetchedMetadata = await fetchCoscineFileMetadata(apiToken, projectId, resourceId, path);
+  const embeddedMetadata = findEmbeddedCoscineMetadata(entry);
+  const metadata = hasMetadataContent(fetchedMetadata) ? fetchedMetadata : embeddedMetadata;
+
   return {
     ...entry,
     path,
-    metadata: await fetchCoscineFileMetadata(apiToken, projectId, resourceId, path),
+    metadata,
   };
+}
+
+function findEmbeddedCoscineMetadata(entry) {
+  for (const key of ['metadata', 'metadataContent', 'graphMetadata', 'metadataValues']) {
+    if (hasMetadataContent(entry?.[key])) {
+      return entry[key];
+    }
+  }
+
+  return null;
+}
+
+function hasMetadataContent(metadata) {
+  if (typeof metadata === 'string') {
+    return metadata.trim() !== '';
+  }
+
+  return Boolean(metadata && typeof metadata === 'object' && Object.keys(metadata).length);
 }
 
 async function fetchCoscineFileMetadata(apiToken, projectId, resourceId, path) {
@@ -732,21 +1006,38 @@ async function fetchCoscineFileMetadata(apiToken, projectId, resourceId, path) {
   const encodedProjectId = encodeURIComponent(projectId);
   const encodedResourceId = encodeURIComponent(resourceId);
   const encodedPath = encodeCoscinePath(path);
+  const metadataBasePath =
+    `/projects/${encodedProjectId}/resources/${encodedResourceId}/graphs/${encodedPath}/metadata`;
+
+  const versions = await fetchCoscineJson(
+    `${metadataBasePath}/versions?OrderBy=${encodeURIComponent('version desc')}&PageSize=1`,
+    apiToken,
+  ).catch((error) => {
+    console.warn('[Coscine metadata] Could not list metadata versions; using Coscine\'s current version.', {
+      message: error instanceof Error ? error.message : String(error),
+      path,
+    });
+    return null;
+  });
+  const latestVersion = Array.isArray(versions?.data) ? versions.data[0]?.version : '';
+  const contentPath = latestVersion
+    ? `${metadataBasePath}/content?graphVersion=${encodeURIComponent(latestVersion)}`
+    : `${metadataBasePath}/content`;
 
   try {
-    const response = await fetchCoscine(
-      `/projects/${encodedProjectId}/resources/${encodedResourceId}/graphs/${encodedPath}/metadata/content`,
-      apiToken,
-      {
-        headers: {
-          Accept: 'text/turtle, text/n3, application/ld+json, application/json;q=0.5, */*;q=0.1',
-        },
+    const response = await fetchCoscine(contentPath, apiToken, {
+      headers: {
+        Accept: 'text/turtle, application/ld+json, application/n-quads;q=0.9, */*;q=0.1',
       },
-    );
+    });
+    const content = await response.text();
 
-    const contentType = response.headers.get('content-type') ?? '';
-    return contentType.includes('application/json') ? response.json() : response.text();
-  } catch {
+    return content || null;
+  } catch (error) {
+    console.warn('[Coscine metadata] Could not load metadata with the user graph-content operation.', {
+      message: error instanceof Error ? error.message : String(error),
+      path,
+    });
     return null;
   }
 }
