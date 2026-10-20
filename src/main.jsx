@@ -3593,6 +3593,7 @@ function ShaclFormHost({
     [shapes],
   );
   const rootShapeSubject = useMemo(() => findRootShapeSubject(sanitizedShapes), [sanitizedShapes]);
+  const targetClassUrls = useMemo(() => collectShapeTargetClasses(sanitizedShapes), [sanitizedShapes]);
   const descriptionsByPath = useMemo(
     () => collectShapeDescriptionsByPath(sanitizedShapes, selectedLanguage),
     [sanitizedShapes, selectedLanguage],
@@ -3617,7 +3618,12 @@ function ShaclFormHost({
 
     const formElement = document.createElement('shacl-form');
     formElement.setRdfUrlResolver?.(fetchExternalMetadataRdf);
-    formElement.setClassInstanceProvider?.(fetchExternalClassInstances);
+    formElement.setClassInstanceProvider?.((classes) => {
+      const classUrls = typeof classes === 'string' ? [classes] : Array.from(classes ?? []);
+      return fetchExternalClassInstances(
+        classUrls.filter((classUrl) => !targetClassUrls.has(classUrl)),
+      );
+    });
     const validateMetadataForSubmission = formElement.validate.bind(formElement);
     formElement.validate = (ignoreEmptyValues = false) => {
       if (ignoreEmptyValues) {
@@ -3786,6 +3792,7 @@ function ShaclFormHost({
     rootShapeSubject,
     selectedLanguage,
     sanitizedShapes,
+    targetClassUrls,
   ]);
 
   useEffect(() => {
@@ -3927,6 +3934,26 @@ function findRootShapeSubject(shapes) {
     )?.subject.value || '';
   } catch {
     return '';
+  }
+}
+
+function collectShapeTargetClasses(shapes) {
+  if (!shapes || typeof shapes !== 'string') {
+    return new Set();
+  }
+
+  try {
+    return new Set(
+      new Parser({ format: 'text/turtle' })
+        .parse(shapes)
+        .filter(
+          (item) =>
+            item.predicate.value === SH_TARGET_CLASS && item.object.termType === 'NamedNode',
+        )
+        .map((item) => item.object.value),
+    );
+  } catch {
+    return new Set();
   }
 }
 
