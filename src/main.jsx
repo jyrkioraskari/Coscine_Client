@@ -12,6 +12,7 @@ const FORM_MEMORY_STORAGE_KEY = 'coscine-upload:form-memory:v1';
 const API_TOKEN_STORAGE_KEY = 'coscine-upload:api-token:v1';
 const SELECTED_RESOURCE_STORAGE_KEY = 'coscine-upload:selected-resource:v1';
 const EMPTY_SEARCH_FILES = Object.freeze([]);
+const MAX_SEARCH_SELECT_VALUES = 10;
 const MAX_TEXT_PREVIEW_BYTES = 100_000;
 const MAX_CSV_PREVIEW_ROWS = 100;
 const MAX_CSV_PREVIEW_COLUMNS = 30;
@@ -2514,22 +2515,10 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
         continue;
       }
 
-      if (isChoice && observedValues.length === 1) {
-        fields.push({
-          description,
-          displayValue: compactMetadataUri(observedValues[0]),
-          id,
-          kind: 'readonly',
-          label,
-          path,
-        });
-        continue;
-      }
-
       fields.push({
         description,
         id,
-        kind: isChoice ? 'select' : 'text',
+        kind: isChoice || observedValues.length < MAX_SEARCH_SELECT_VALUES ? 'select' : 'text',
         label,
         path,
         values: observedValues,
