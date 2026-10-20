@@ -3,9 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { DataFactory, Parser, Writer } from 'n3';
 import '@ulb-darmstadt/shacl-form';
 import coscineLogo from './assets/coscine_rgb.svg';
-import {
-  createCoscineService,
-} from './coscineApi';
+import { createCoscineService } from './coscineApi';
+import { fetchExternalClassInstances, fetchExternalMetadataRdf } from './externalRdf';
 import './styles.css';
 
 const FORM_MEMORY_STORAGE_KEY = 'coscine-upload:form-memory:v1';
@@ -26,6 +25,7 @@ const SH_IN = 'http://www.w3.org/ns/shacl#in';
 const SH_PATH = 'http://www.w3.org/ns/shacl#path';
 const SH_PROPERTY = 'http://www.w3.org/ns/shacl#property';
 const SH_NAME = 'http://www.w3.org/ns/shacl#name';
+const RDFS_LABEL = 'http://www.w3.org/2000/01/rdf-schema#label';
 const SH_DESCRIPTION = 'http://www.w3.org/ns/shacl#description';
 const SH_QUALIFIED_VALUE_SHAPE = 'http://www.w3.org/ns/shacl#qualifiedValueShape';
 const SH_TARGET_CLASS = 'http://www.w3.org/ns/shacl#targetClass';
@@ -3588,7 +3588,10 @@ function ShaclFormHost({
   const fieldsRef = useRef([]);
   const rememberedFieldPathsRef = useRef(rememberedFieldPaths);
   const rememberedFieldPathSet = useMemo(() => new Set(rememberedFieldPaths), [rememberedFieldPaths]);
-  const sanitizedShapes = useMemo(() => sanitizeShapesForForm(shapes), [shapes]);
+  const sanitizedShapes = useMemo(
+    () => sanitizeShapesForForm(removeUploadTechnicalProperties(shapes), true),
+    [shapes],
+  );
   const rootShapeSubject = useMemo(() => findRootShapeSubject(sanitizedShapes), [sanitizedShapes]);
   const descriptionsByPath = useMemo(
     () => collectShapeDescriptionsByPath(sanitizedShapes, selectedLanguage),
@@ -3613,6 +3616,8 @@ function ShaclFormHost({
     host.replaceChildren();
 
     const formElement = document.createElement('shacl-form');
+    formElement.setRdfUrlResolver?.(fetchExternalMetadataRdf);
+    formElement.setClassInstanceProvider?.(fetchExternalClassInstances);
     const validateMetadataForSubmission = formElement.validate.bind(formElement);
     formElement.validate = (ignoreEmptyValues = false) => {
       if (ignoreEmptyValues) {
@@ -3798,7 +3803,51 @@ function ShaclFormHost({
   return <div className="shacl-form-host" ref={hostRef} />;
 }
 
-function sanitizeShapesForForm(shapes) {
+function removeUploadTechnicalProperties(shapes) {
+  if (!shapes || typeof shapes !== 'string') {
+    return '';
+  }
+
+  const hiddenLabels = new Set(['identifier scheme', 'scheme uri']);
+
+  try {
+    const quads = new Parser({ format: 'text/turtle' }).parse(shapes);
+    const hiddenPropertyShapes = new Set(
+      quads
+        .filter(
+          (item) =>
+            [SH_NAME, RDFS_LABEL].includes(item.predicate.value) &&
+            item.object.termType === 'Literal',
+        )
+        .filter((item) => hiddenLabels.has(item.object.value.trim().toLowerCase()))
+        .map((item) => item.subject.id),
+    );
+    const filteredQuads = quads.filter(
+      (item) =>
+        item.predicate.value !== SH_PROPERTY ||
+        !hiddenPropertyShapes.has(item.object.id),
+    );
+
+    if (filteredQuads.length === quads.length) {
+      return shapes;
+    }
+
+    const writer = new Writer({ format: 'text/turtle' });
+    writer.addQuads(filteredQuads);
+    let serialized = '';
+    writer.end((error, output) => {
+      if (error) {
+        throw error;
+      }
+      serialized = output;
+    });
+    return serialized || shapes;
+  } catch {
+    return shapes;
+  }
+}
+
+function sanitizeShapesForForm(shapes, preserveImports = false) {
   if (!shapes || typeof shapes !== 'string') {
     return '';
   }
@@ -3807,13 +3856,7 @@ function sanitizeShapesForForm(shapes) {
     const parser = new Parser({ format: 'text/turtle' });
     const quads = parser.parse(shapes);
     const filteredQuads = quads
-      .filter((item) => {
-        // Coscine profile imports have already been resolved through the API.
-        // Leaving an owl:imports statement here makes the web component fetch
-        // it independently in the browser, where the public profile endpoint
-        // does not allow cross-origin access.
-        return item.predicate.value !== OWL_IMPORTS;
-      })
+      .filter((item) => preserveImports || item.predicate.value !== OWL_IMPORTS)
       .map((item) => normalizeShapeQuad(item));
 
     if (

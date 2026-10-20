@@ -683,7 +683,7 @@ async function mergeApplicationProfileShapes(rootShapes, importedProfiles) {
   // declared sh:NodeShape. Many Coscine profiles only use the latter.
   const resourceRoot = findProfileRootShape(rootQuads);
 
-  const mergedQuads = rootQuads.filter((item) => item.predicate.value !== OWL_IMPORTS);
+  const mergedQuads = rootQuads.filter((item) => !isApplicationProfileImport(item));
   const importedRootIdsByProfile = [];
 
   for (const importedQuads of importedQuadsByProfile) {
@@ -691,7 +691,7 @@ async function mergeApplicationProfileShapes(rootShapes, importedProfiles) {
     importedRootIdsByProfile.push(importedRoots);
 
     for (const item of importedQuads) {
-      if (item.predicate.value === OWL_IMPORTS) {
+      if (isApplicationProfileImport(item)) {
         continue;
       }
 
@@ -741,6 +741,14 @@ async function mergeApplicationProfileShapes(rootShapes, importedProfiles) {
   });
 
   return serializeTurtle(mergedQuads);
+}
+
+function isApplicationProfileImport(item) {
+  return (
+    item.predicate.value === OWL_IMPORTS &&
+    item.object.termType === 'NamedNode' &&
+    item.object.value.startsWith(COSCINE_APPLICATION_PROFILE_URI_PREFIX)
+  );
 }
 
 function findProfileRootShape(quads) {
