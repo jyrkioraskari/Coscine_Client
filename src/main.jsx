@@ -270,11 +270,7 @@ function App() {
       setSearchResourceKey(restoredResourceKey);
       writeSavedResourceKey(restoredResourceKey);
       setIsLoggedIn(true);
-      setStatus(
-        payload.resources.length
-          ? `Select a resource, choose a file, then fill the required Coscine metadata. Using ${coscineService.label}.`
-          : 'No resources returned for this API token.',
-      );
+      setStatus(payload.resources.length ? '' : 'No resources returned for this API token.');
     } catch (loadError) {
       setIsLoggedIn(false);
       setError(loadError.message || 'Could not load Coscine resources.');
@@ -334,7 +330,7 @@ function App() {
         }
 
         setProfile(loadedProfile);
-        setStatus(`Resource ready in ${coscineService.label}. Choose the file to upload and fill the metadata.`);
+        setStatus('');
       })
       .catch((profileError) => {
         if (!isActive) {
@@ -391,13 +387,10 @@ function App() {
 
         setSearchResourceDetails(details);
         setSearchProfile(loadedProfile?.profileError ? null : loadedProfile);
-        setStatus(
-          loadedProfile?.profileError
-            ? `Loaded ${details.files?.length ?? 0} files. Could not load SHACL form: ${loadedProfile.profileError.message}`
-            : loadedProfile
-              ? `Loaded ${details.files?.length ?? 0} files and SHACL form.`
-              : `Loaded ${details.files?.length ?? 0} files. No application profile URI was found.`,
-        );
+        if (loadedProfile?.profileError) {
+          setError(loadedProfile.profileError.message || 'Could not load the selected resource form.');
+        }
+        setStatus('');
       })
       .catch((selectionError) => {
         if (!isActive) {
@@ -565,7 +558,7 @@ function App() {
                     <optgroup key={project.id} label={project.name}>
                       {project.resources.map((resource) => (
                         <option key={resourceKey(resource)} value={resourceKey(resource)}>
-                          {resource.resourceName}
+                          {getResourceDisplayName(resource)}
                           {resource.resourceType ? ` (${resource.resourceType})` : ''}
                         </option>
                       ))}
@@ -704,7 +697,7 @@ function SearchView({
                   <optgroup key={project.id} label={project.name}>
                     {project.resources.map((resource) => (
                       <option key={resourceKey(resource)} value={resourceKey(resource)}>
-                        {resource.resourceName}
+                        {getResourceDisplayName(resource)}
                         {resource.resourceType ? ` (${resource.resourceType})` : ''}
                       </option>
                     ))}
@@ -776,7 +769,7 @@ function SearchResourceWorkspace({
       <div className="detail-header">
         <div>
           <p className="eyebrow">{resource.projectName}</p>
-          <h2>{resource.resourceName}</h2>
+          <h2>{getResourceDisplayName(resource)}</h2>
         </div>
         <span>{rawFiles.length} files</span>
       </div>
@@ -3226,7 +3219,7 @@ function TestEnvironmentView({ isEnabled, onDeleteResource, onDeleteUpload, onRe
                     type="button"
                     onClick={() => setSelectedViewResourceKey(resourceKey(resource))}
                   >
-                    <strong>{resource.resourceName}</strong>
+                    <strong>{getResourceDisplayName(resource)}</strong>
                     <span>{resource.resourceType || 'Resource'}</span>
                     <small>{resource.shaclFileName ? `SHACL file: ${resource.shaclFileName}` : 'Created resource'}</small>
                   </button>
@@ -3275,7 +3268,7 @@ function TestEnvironmentView({ isEnabled, onDeleteResource, onDeleteUpload, onRe
                       <strong>{file.fileName}</strong>
                       <span>{formatBytes(file.fileSize)}</span>
                     </div>
-                    <small>{file.resourceName || file.resourceId}</small>
+                    <small>{getResourceDisplayName(file)}</small>
                   </button>
                   <button
                     className="delete-row-button"
@@ -3304,7 +3297,7 @@ function SelectedResourceDetails({ resource }) {
       <dl className="upload-facts upload-facts-compact">
         <div>
           <dt>Name</dt>
-          <dd>{resource.resourceName}</dd>
+          <dd>{getResourceDisplayName(resource)}</dd>
         </div>
         <div>
           <dt>Project</dt>
@@ -3334,7 +3327,7 @@ function SelectedUploadDetails({ file }) {
       <dl className="upload-facts upload-facts-compact">
         <div>
           <dt>Resource</dt>
-          <dd>{file.resourceName || file.resourceId}</dd>
+          <dd>{getResourceDisplayName(file)}</dd>
         </div>
         <div>
           <dt>Project</dt>
@@ -3434,7 +3427,7 @@ function UploadWorkspace({
       <div className="detail-header">
         <div>
           <p className="eyebrow">{resource.projectName}</p>
-          <h2>{resource.resourceName}</h2>
+          <h2>{getResourceDisplayName(resource)}</h2>
         </div>
         <span>{resource.resourceType || 'Resource'}</span>
       </div>
@@ -5180,6 +5173,16 @@ function groupResourcesByProject(resources) {
 
 function resourceKey(resource) {
   return `${resource.projectId}:${resource.resourceId}`;
+}
+
+function getResourceDisplayName(resource) {
+  const resourceName = String(resource.resourceName ?? '').trim();
+  const resourceId = String(resource.resourceId ?? '').trim();
+  return resourceName &&
+    resourceName !== resourceId &&
+    !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(resourceName)
+    ? resourceName
+    : 'Unnamed resource';
 }
 
 function resourceNameFromFileName(fileName) {
