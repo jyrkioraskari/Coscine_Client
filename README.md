@@ -129,4 +129,11 @@ API tokens are entered in the browser and sent as `Authorization` headers only t
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE)
+for the complete license terms.
+
+## Citation
+
+If you use Coscine Client in research or another published work, please cite
+the software using the metadata in [CITATION.cff](CITATION.cff). Machine-readable
+software metadata is also available in [codemeta.json](codemeta.json).

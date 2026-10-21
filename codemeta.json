@@ -1,0 +1,33 @@
+{
+  "@context": "https://w3id.org/codemeta/3.0",
+  "@type": "SoftwareSourceCode",
+  "name": "Coscine Client",
+  "description": "A browser-based React application for working with RWTH Coscine resources. It loads Coscine projects and resources, renders SHACL-based metadata forms, uploads files with metadata, and provides search and preview functionality.",
+  "version": "0.1.0",
+  "author": {
+    "@type": "Person",
+    "@id": "https://orcid.org/0000-0002-4723-3878",
+    "givenName": "Jyrki",
+    "familyName": "Oraskari",
+    "affiliation": {
+      "@type": "Organization",
+      "name": "RWTH Aachen University"
+    },
+    "url": "https://github.com/jyrkioraskari"
+  },
+  "codeRepository": "https://github.com/jyrkioraskari/Coscine_Client",
+  "issueTracker": "https://github.com/jyrkioraskari/Coscine_Client/issues",
+  "license": "https://spdx.org/licenses/Apache-2.0.html",
+  "dateCreated": "2026-07-03",
+  "programmingLanguage": "JavaScript",
+  "runtimePlatform": "Node.js >=20",
+  "applicationCategory": "Research data management",
+  "keywords": [
+    "Coscine",
+    "research data management",
+    "SHACL",
+    "metadata",
+    "React"
+  ],
+  "isAccessibleForFree": true
+}

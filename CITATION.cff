@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata in this file."
+title: "Coscine Client"
+type: software
+authors:
+  - given-names: Jyrki
+    family-names: Oraskari
+    orcid: "https://orcid.org/0000-0002-4723-3878"
+    affiliation: "RWTH Aachen University"
+version: 0.1.0
+abstract: >-
+  A browser-based React application for working with RWTH Coscine resources.
+  It loads Coscine projects and resources, renders SHACL-based metadata forms,
+  uploads files with metadata, and provides search and preview functionality.
+repository-code: "https://github.com/jyrkioraskari/Coscine_Client"
+url: "https://github.com/jyrkioraskari/Coscine_Client"
+license: Apache-2.0
+keywords:
+  - Coscine
+  - research data management
+  - SHACL
+  - metadata
+  - React
