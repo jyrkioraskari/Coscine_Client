@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react';
+import { copyFile } from 'node:fs/promises';
 import { defineConfig } from 'vite';
 import { proxyRdfResource } from './rdfProxy.js';
 
@@ -87,6 +88,19 @@ export default defineConfig({
 
           await proxyCoscineRequest(request, response);
         });
+      },
+    },
+    {
+      name: 'copy-release-notices',
+      apply: 'build',
+      async closeBundle() {
+        await Promise.all([
+          copyFile(new URL('./LICENSE', import.meta.url), new URL('./dist/LICENSE', import.meta.url)),
+          copyFile(
+            new URL('./THIRD_PARTY_PROVENANCE.md', import.meta.url),
+            new URL('./dist/THIRD_PARTY_PROVENANCE.md', import.meta.url),
+          ),
+        ]);
       },
     },
   ],

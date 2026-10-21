@@ -5,6 +5,14 @@ import '@ulb-darmstadt/shacl-form';
 import coscineLogo from './assets/coscine_rgb.svg';
 import { createCoscineService } from './coscineApi';
 import { fetchExternalClassInstances, fetchExternalMetadataRdf } from './externalRdf';
+import {
+  cacheFilePreview,
+  createFileListPreview,
+  createTypeThumbnail,
+  filePreviewCacheKey,
+  filePreviewFingerprint,
+  readCachedFilePreviews,
+} from './filePreviewCache';
 import './styles.css';
 
 const FORM_MEMORY_STORAGE_KEY = 'coscine-upload:form-memory:v1';
@@ -13,8 +21,9 @@ const SELECTED_RESOURCE_STORAGE_KEY = 'coscine-upload:selected-resource:v1';
 const EMPTY_SEARCH_FILES = Object.freeze([]);
 const MAX_SEARCH_SELECT_VALUES = 10;
 const MAX_TEXT_PREVIEW_BYTES = 100_000;
-const MAX_CSV_PREVIEW_ROWS = 100;
-const MAX_CSV_PREVIEW_COLUMNS = 30;
+const TABULAR_PREVIEW_PAGE_ROWS = 100;
+const FILE_LIST_PAGE_SIZE = 4;
+const MAX_TABULAR_PREVIEW_BYTES = 50_000_000;
 const DCTERMS_CONFORMS_TO = 'http://purl.org/dc/terms/conformsTo';
 const DCTERMS_DESCRIPTION = 'http://purl.org/dc/terms/description';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
@@ -54,30 +63,39 @@ const APP_TEXT = {
     aims: 'AIMS',
     apiTokenPlaceholder: 'Coscine API token',
     browserMemory: 'Browser memory',
-    clear: 'Clear',
     coscinePath: 'Coscine path',
     loadResources: 'Login with API Token',
     loading: 'Loading...',
     loadingShaclForm: 'Loading SHACL form...',
     logOut: 'Log out',
     mainViews: 'Main views',
-    metadataForm: 'Search form',
     noFilesYet: 'No files yet.',
     ready: 'Ready',
     rememberLogin: 'Keep me logged in on this device',
     delete: 'Delete',
     download: 'Download',
     files: 'Files',
+    loadingFiles: 'Loading files...',
+    loadingPreview: 'Loading preview...',
+    loadResourcesBeforeSearch: 'Load production resources before searching.',
+    noFilterFields: 'No metadata fields match this search.',
+    noMatchingFiles: 'No files match the current metadata filters.',
+    noReadableMetadata: 'No readable Coscine metadata is available for this file.',
     pending: 'Pending',
     refresh: 'Refresh',
     requiredMetadata: 'Required metadata',
     resourceName: 'Resource name',
     search: 'Search',
     searchProfiles: 'Search profiles',
+    showReadonlyFields: 'Show all fields',
     selectResource: 'Select a resource',
     resizeFormAndFiles: 'Resize form and files',
     searching: 'Searching...',
-    selectedFile: 'Selected files',
+    selectedFile: 'Selected file',
+    selectFilePrompt: 'Select a file to inspect its preview and metadata.',
+    selectResourcePrompt: 'Select a resource to load its files and metadata filters.',
+    preview: 'Preview',
+    metadata: 'Metadata',
     shaclFormFile: 'SHACL form file',
     tabSearch: 'Search',
     tabUpload: 'Upload',
@@ -89,30 +107,39 @@ const APP_TEXT = {
     aims: 'AIMS',
     apiTokenPlaceholder: 'Coscine-API-Token',
     browserMemory: 'Browser-Speicher',
-    clear: 'Leeren',
     coscinePath: 'Coscine-Pfad',
     loadResources: 'Mit API-Token anmelden',
     loading: 'Wird geladen...',
     loadingShaclForm: 'SHACL-Formular wird geladen...',
     logOut: 'Abmelden',
     mainViews: 'Hauptansichten',
-    metadataForm: 'Suchformular',
     noFilesYet: 'Noch keine Dateien.',
     ready: 'Bereit',
     rememberLogin: 'Auf diesem Geraet angemeldet bleiben',
     delete: 'Loeschen',
     download: 'Herunterladen',
     files: 'Dateien',
+    loadingFiles: 'Dateien werden geladen...',
+    loadingPreview: 'Vorschau wird geladen...',
+    loadResourcesBeforeSearch: 'Produktionsressourcen laden, um sie zu durchsuchen.',
+    noFilterFields: 'Keine Metadatenfelder entsprechen dieser Suche.',
+    noMatchingFiles: 'Keine Dateien entsprechen den aktuellen Metadatenfiltern.',
+    noReadableMetadata: 'Fuer diese Datei sind keine lesbaren Coscine-Metadaten verfuegbar.',
     pending: 'Ausstehend',
     refresh: 'Aktualisieren',
     requiredMetadata: 'Erforderliche Metadaten',
     resourceName: 'Ressourcenname',
     search: 'Suchen',
     searchProfiles: 'Profile suchen',
+    showReadonlyFields: 'Alle Felder anzeigen',
     selectResource: 'Ressource waehlen',
     resizeFormAndFiles: 'Formular und Dateien skalieren',
     searching: 'Suche...',
-    selectedFile: 'Ausgewaehlte Dateien',
+    selectedFile: 'Ausgewaehlte Datei',
+    selectFilePrompt: 'Datei auswaehlen, um Vorschau und Metadaten anzuzeigen.',
+    selectResourcePrompt: 'Ressource auswaehlen, um Dateien und Metadatenfilter zu laden.',
+    preview: 'Vorschau',
+    metadata: 'Metadaten',
     shaclFormFile: 'SHACL-Formulardatei',
     tabSearch: 'Suche',
     tabUpload: 'Hochladen',
@@ -158,9 +185,8 @@ function App() {
   const [rememberLogin, setRememberLogin] = useState(() => Boolean(readSavedApiToken()));
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [activeTab, setActiveTab] = useState('upload');
-  const [searchResourceKey, setSearchResourceKey] = useState('');
-  const [searchResourceDetails, setSearchResourceDetails] = useState(null);
   const [searchProfile, setSearchProfile] = useState(null);
+  const [searchResourceDetails, setSearchResourceDetails] = useState(null);
   const [, setSearchFilterRdf] = useState('');
   const [searchRangeFilters, setSearchRangeFilters] = useState({});
   const [isLoadingSearchSelection, setIsLoadingSearchSelection] = useState(false);
@@ -207,14 +233,8 @@ function App() {
     () => resources.find((resource) => resourceKey(resource) === selectedKey) ?? null,
     [resources, selectedKey],
   );
-  const selectedSearchResource = useMemo(
-    () => resources.find((resource) => resourceKey(resource) === searchResourceKey) ?? null,
-    [resources, searchResourceKey],
-  );
-
   function selectResource(resourceKeyValue) {
     setSelectedKey(resourceKeyValue);
-    setSearchResourceKey(resourceKeyValue);
     writeSavedResourceKey(resourceKeyValue);
   }
 
@@ -222,9 +242,8 @@ function App() {
     setProjectsCount(0);
     setResources([]);
     setSelectedKey('');
-    setSearchResourceKey('');
-    setSearchResourceDetails(null);
     setSearchProfile(null);
+    setSearchResourceDetails(null);
     setSearchFilterRdf('');
     setSearchRangeFilters({});
     setProfile(null);
@@ -244,9 +263,8 @@ function App() {
     setProjectsCount(0);
     setResources([]);
     setSelectedKey('');
-    setSearchResourceKey('');
-    setSearchResourceDetails(null);
     setSearchProfile(null);
+    setSearchResourceDetails(null);
     setSearchFilterRdf('');
     setSearchRangeFilters({});
     setProfile(null);
@@ -268,7 +286,6 @@ function App() {
       setProjectsCount(payload.projects);
       setResources(payload.resources);
       setSelectedKey(restoredResourceKey);
-      setSearchResourceKey(restoredResourceKey);
       writeSavedResourceKey(restoredResourceKey);
       setIsLoggedIn(true);
       setStatus(payload.resources.length ? '' : 'No resources returned for this API token.');
@@ -288,9 +305,8 @@ function App() {
     setProjectsCount(0);
     setResources([]);
     setSelectedKey('');
-    setSearchResourceKey('');
-    setSearchResourceDetails(null);
     setSearchProfile(null);
+    setSearchResourceDetails(null);
     setProfile(null);
     setSelectedFiles([]);
     setTargetPath('');
@@ -356,7 +372,7 @@ function App() {
     if (
       activeTab !== 'search' ||
       !apiToken.trim() ||
-      !selectedSearchResource ||
+      !selectedResource ||
       typeof coscineService.fetchResourceDetails !== 'function'
     ) {
       return undefined;
@@ -372,11 +388,11 @@ function App() {
     setIsLoadingSearchSelection(true);
 
     const detailsRequest = coscineService.fetchResourceDetails(apiToken, {
-      projectId: selectedSearchResource.projectId,
-      resourceId: selectedSearchResource.resourceId,
+      projectId: selectedResource.projectId,
+      resourceId: selectedResource.resourceId,
     });
-    const profileRequest = selectedSearchResource.applicationProfileUri
-      ? coscineService.fetchApplicationProfileDefinition(apiToken, selectedSearchResource.applicationProfileUri)
+    const profileRequest = selectedResource.applicationProfileUri
+      ? coscineService.fetchApplicationProfileDefinition(apiToken, selectedResource.applicationProfileUri)
           .catch((profileError) => ({ profileError }))
       : Promise.resolve(null);
 
@@ -389,7 +405,18 @@ function App() {
         setSearchResourceDetails(details);
         setSearchProfile(loadedProfile?.profileError ? null : loadedProfile);
         if (loadedProfile?.profileError) {
+          console.error('[Coscine search UI] Application profile failed to load', {
+            resourceId: selectedResource.resourceId,
+            profileUri: selectedResource.applicationProfileUri,
+            message: loadedProfile.profileError.message,
+          });
           setError(loadedProfile.profileError.message || 'Could not load the selected resource form.');
+        } else {
+          console.info('[Coscine search UI] Application profile loaded', {
+            resourceId: selectedResource.resourceId,
+            profileUri: selectedResource.applicationProfileUri,
+            shapeCharacters: loadedProfile?.shapes?.length ?? 0,
+          });
         }
         setStatus('');
       })
@@ -410,7 +437,7 @@ function App() {
     return () => {
       isActive = false;
     };
-  }, [activeTab, apiToken, coscineService, selectedSearchResource]);
+  }, [activeTab, apiToken, coscineService, selectedResource]);
 
   async function uploadToCoscine() {
     setError('');
@@ -528,6 +555,39 @@ function App() {
         </form>
       </header>
 
+      {error ? <div className="alert">{error}</div> : null}
+      {status ? <div className="status-line">{status}</div> : null}
+
+      <section className="common-resource-bar" aria-label={text.selectResource}>
+        {resources.length ? (
+          <>
+            <label className="field-label common-resource-picker">
+              <span>{text.selectResource}</span>
+              <select value={selectedKey} onChange={(event) => selectResource(event.target.value)}>
+                {groupResourcesByProject(resources).map((project) => (
+                  <optgroup key={project.id} label={project.name}>
+                    {project.resources.map((resource) => (
+                      <option key={resourceKey(resource)} value={resourceKey(resource)}>
+                        {getResourceDisplayName(resource)}
+                        {getResourceTypeDisplayName(resource) ? ` (${getResourceTypeDisplayName(resource)})` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            {selectedResource ? (
+              <div className="common-resource-context">
+                <span>{getProjectDisplayName(selectedResource)}</span>
+                {getResourceTypeDisplayName(selectedResource) ? <span>{getResourceTypeDisplayName(selectedResource)}</span> : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="common-resource-empty">Enter an API token and load resources.</div>
+        )}
+      </section>
+
       <nav className="tab-bar" aria-label={text.mainViews}>
         <button
           type="button"
@@ -545,35 +605,8 @@ function App() {
         </button>
       </nav>
 
-      {error ? <div className="alert">{error}</div> : null}
-      {status ? <div className="status-line">{status}</div> : null}
-
       {activeTab === 'upload' ? (
-        <section className="content-grid">
-          <aside className="resource-list">
-            {resources.length ? (
-              <label className="field-label resource-select-field">
-                <span>{text.selectResource}</span>
-                <select value={selectedKey} onChange={(event) => selectResource(event.target.value)}>
-                  {groupResourcesByProject(resources).map((project) => (
-                    <optgroup key={project.id} label={project.name}>
-                      {project.resources.map((resource) => (
-                        <option key={resourceKey(resource)} value={resourceKey(resource)}>
-                          {getResourceDisplayName(resource)}
-                          {getResourceTypeDisplayName(resource) ? ` (${getResourceTypeDisplayName(resource)})` : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <div className="empty-state">
-                Enter an API token and load resources.
-              </div>
-            )}
-          </aside>
-
+        <section className="content-grid upload-content-grid">
           <section className="details-panel">
             {selectedResource ? (
               <UploadWorkspace
@@ -613,16 +646,13 @@ function App() {
           apiToken={apiToken}
           isLoadingSelection={isLoadingSearchSelection}
           profile={searchProfile}
+          resourceDetails={searchResourceDetails}
           selectedLanguage={selectedLanguage}
           rangeFilters={searchRangeFilters}
-          resourceDetails={searchResourceDetails}
-          resources={resources}
-          selectedResource={selectedSearchResource}
-          selectedResourceKey={searchResourceKey}
+          selectedResource={selectedResource}
           service={coscineService}
           onFilterRdfChange={setSearchFilterRdf}
           onRangeFiltersChange={setSearchRangeFilters}
-          onSelectResourceKey={selectResource}
         />
       ) : null}
     </main>
@@ -664,249 +694,177 @@ function SearchView({
   isLoadingSelection,
   onFilterRdfChange,
   onRangeFiltersChange,
-  onSelectResourceKey,
   profile,
   rangeFilters,
   resourceDetails,
-  resources,
   selectedLanguage,
   selectedResource,
-  selectedResourceKey,
   service,
 }) {
   const text = useAppText();
-  const files = resourceDetails?.files ?? EMPTY_SEARCH_FILES;
   const [localFilterRdf, setLocalFilterRdf] = useState('');
+  const files = resourceDetails?.files ?? EMPTY_SEARCH_FILES;
   const filteredFiles = useMemo(
     () => applyRangeFilters(filterFiles(files, localFilterRdf), rangeFilters),
     [files, localFilterRdf, rangeFilters],
   );
-
   const handleFilterRdfChange = useCallback((value) => {
     setLocalFilterRdf(value);
     onFilterRdfChange(value);
   }, [onFilterRdfChange]);
 
-  return (
-    <>
-      <section className="content-grid search-content-grid">
-        <aside className="resource-list search-resource-list">
-          {resources.length ? (
-            <label className="field-label resource-select-field">
-              <span>{text.selectResource}</span>
-              <select value={selectedResourceKey} onChange={(event) => onSelectResourceKey(event.target.value)}>
-                {groupResourcesByProject(resources).map((project) => (
-                  <optgroup key={project.id} label={project.name}>
-                    {project.resources.map((resource) => (
-                      <option key={resourceKey(resource)} value={resourceKey(resource)}>
-                        {getResourceDisplayName(resource)}
-                        {getResourceTypeDisplayName(resource) ? ` (${getResourceTypeDisplayName(resource)})` : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <div className="empty-state">Load production resources before searching.</div>
-          )}
-        </aside>
+  useEffect(() => {
+    setLocalFilterRdf('');
+  }, [selectedResource?.projectId, selectedResource?.resourceId]);
 
-        <section className="details-panel">
-          {selectedResource ? (
-            <SearchResourceWorkspace
-              apiToken={apiToken}
-              files={filteredFiles}
-              isLoading={isLoadingSelection}
-              onFilterRdfChange={handleFilterRdfChange}
-              onRangeFiltersChange={onRangeFiltersChange}
-              profile={profile}
-              rangeFilters={rangeFilters}
-              rawFiles={files}
-              resource={selectedResource}
-              selectedLanguage={selectedLanguage}
-              service={service}
-            />
-          ) : (
-            <div className="empty-state">Select a resource to load files and its SHACL form.</div>
-          )}
-        </section>
+  return (
+    <section className="search-page">
+      <section className="search-resource-surface">
+        {selectedResource ? (
+          <SearchResourceWorkspace
+            apiToken={apiToken}
+            files={filteredFiles}
+            hasSearched={Boolean(resourceDetails)}
+            isLoading={isLoadingSelection}
+            onFilterRdfChange={handleFilterRdfChange}
+            onRangeFiltersChange={onRangeFiltersChange}
+            profile={profile}
+            resource={selectedResource}
+            searchSourceFiles={files}
+            selectedLanguage={selectedLanguage}
+            service={service}
+          />
+        ) : (
+          <div className="empty-state">{text.selectResourcePrompt}</div>
+        )}
       </section>
-    </>
+    </section>
   );
 }
 
 function SearchResourceWorkspace({
   apiToken,
   files,
+  hasSearched,
   isLoading,
   onFilterRdfChange,
   onRangeFiltersChange,
   profile,
-  rawFiles,
   resource,
+  searchSourceFiles,
   selectedLanguage,
   service,
 }) {
   const text = useAppText();
+  const resourceHasFiles = searchSourceFiles.length > 0;
   const [selectedFilePath, setSelectedFilePath] = useState('');
-  const [formWidth, setFormWidth] = useState(58);
-  const [filterResetVersion, setFilterResetVersion] = useState(0);
-  const selectedFile = useMemo(
-    () => files.find((file) => searchFilePath(file) === selectedFilePath) ?? null,
-    [files, selectedFilePath],
+  const [filePage, setFilePage] = useState(1);
+  const filePageCount = Math.max(1, Math.ceil(files.length / FILE_LIST_PAGE_SIZE));
+  const safeFilePage = Math.min(filePage, filePageCount);
+  const visibleFiles = useMemo(
+    () => files.slice(
+      (safeFilePage - 1) * FILE_LIST_PAGE_SIZE,
+      safeFilePage * FILE_LIST_PAGE_SIZE,
+    ),
+    [files, safeFilePage],
   );
+  const selectedFile = useMemo(
+    () => visibleFiles.find((file) => searchFilePath(file) === selectedFilePath) ?? null,
+    [selectedFilePath, visibleFiles],
+  );
+  const filePreviewIcons = useFilePreviewIcons({
+    apiToken,
+    files: visibleFiles,
+    resource,
+    service,
+  });
 
   useEffect(() => {
     setSelectedFilePath('');
+    setFilePage(1);
     onFilterRdfChange('');
     onRangeFiltersChange({});
   }, [onFilterRdfChange, onRangeFiltersChange, resource.projectId, resource.resourceId]);
 
   useEffect(() => {
-    setSelectedFilePath(files.length ? searchFilePath(files[0]) : '');
+    setFilePage(1);
   }, [files]);
+
+  useEffect(() => {
+    if (!visibleFiles.length) {
+      setSelectedFilePath('');
+      return;
+    }
+
+    if (!selectedFilePath || !visibleFiles.some((file) => searchFilePath(file) === selectedFilePath)) {
+      setSelectedFilePath(searchFilePath(visibleFiles[0]));
+    }
+  }, [selectedFilePath, visibleFiles]);
 
   return (
     <>
-      <div className="detail-header">
-        <div>
-          <p className="eyebrow">{getProjectDisplayName(resource)}</p>
-          <h2>{getResourceDisplayName(resource)}</h2>
-        </div>
-      </div>
-
-      {getResourceTypeDisplayName(resource) ? (
-        <div className="metadata-line">
-          <span>{getResourceTypeDisplayName(resource)}</span>
-        </div>
-      ) : null}
-
-      {!isLoading && !rawFiles.length ? (
-        <div className="empty-state">{text.noFilesYet}</div>
-      ) : (
-        <div
-          className="search-workspace-split"
-          style={{
-            '--form-width': `${formWidth}%`,
-            '--files-width': `${100 - formWidth}%`,
-          }}
-        >
+      <div className={`search-workspace-layout${resourceHasFiles ? '' : ' without-search-form'}`}>
+        {resourceHasFiles ? (
           <MetadataFilterForm
             isLoading={isLoading}
             onRangeFiltersChange={onRangeFiltersChange}
             profile={profile}
-            rawFiles={rawFiles}
-            resetVersion={filterResetVersion}
+            rawFiles={searchSourceFiles}
             resource={resource}
             selectedLanguage={selectedLanguage}
             onFilterRdfChange={onFilterRdfChange}
-            onClear={() => {
-              onFilterRdfChange('');
-              onRangeFiltersChange({});
-              setFilterResetVersion((currentVersion) => currentVersion + 1);
-            }}
           />
-          <ResizeHandle
-            onResize={(delta) => {
-              setFormWidth((currentWidth) => Math.min(78, Math.max(42, currentWidth + delta)));
-            }}
-          />
-          <div className="search-files-column">
-            <FileTable
-              apiToken={apiToken}
-              files={files}
-              isLoading={isLoading}
-              resource={resource}
-              selectedFilePath={selectedFilePath}
-              service={service}
-              onSelectFile={(file) => setSelectedFilePath(searchFilePath(file))}
-            />
-            <FilePreview
-              apiToken={apiToken}
-              file={selectedFile}
-              profile={profile}
-              resource={resource}
-              selectedLanguage={selectedLanguage}
-              service={service}
-            />
-          </div>
+        ) : null}
+          <section className="file-browser-panel">
+            <div className="file-browser-grid">
+              <FileTable
+                currentPage={safeFilePage}
+                files={visibleFiles}
+                hasSearched={hasSearched}
+                isLoading={isLoading}
+                onPageChange={setFilePage}
+                previewIcons={filePreviewIcons}
+                profile={profile}
+                selectedLanguage={selectedLanguage}
+                selectedFilePath={selectedFilePath}
+                totalPages={filePageCount}
+                onSelectFile={(file) => setSelectedFilePath(searchFilePath(file))}
+              />
+              <FilePreview
+                apiToken={apiToken}
+                file={selectedFile}
+                profile={profile}
+                resource={resource}
+                selectedLanguage={selectedLanguage}
+                service={service}
+              />
+            </div>
+          </section>
         </div>
-      )}
     </>
-  );
-}
-
-function ResizeHandle({ onResize }) {
-  const text = useAppText();
-  const startXRef = useRef(0);
-
-  function handlePointerDown(event) {
-    startXRef.current = event.clientX;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function handlePointerMove(event) {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-      return;
-    }
-
-    const deltaPx = event.clientX - startXRef.current;
-    const parentWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 1;
-    startXRef.current = event.clientX;
-    onResize((deltaPx / parentWidth) * 100);
-  }
-
-  function handlePointerUp(event) {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }
-
-  return (
-    <button
-      aria-label={text.resizeFormAndFiles}
-      className="resize-handle"
-      type="button"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-    />
   );
 }
 
 function MetadataFilterForm({
   isLoading,
-  onClear,
   onFilterRdfChange,
   onRangeFiltersChange,
   profile,
   rawFiles,
-  resetVersion,
   resource,
   selectedLanguage,
 }) {
   const text = useAppText();
-  const formKey = `${resource.projectId}:${resource.resourceId}:${profile?.baseUri ?? 'none'}:${resetVersion}`;
+  const formKey = `${resource.projectId}:${resource.resourceId}:${profile?.baseUri ?? 'none'}`;
   const numericRangeStats = useMemo(() => buildNumericRangeStats(rawFiles), [rawFiles]);
   const observedMetadataValues = useMemo(() => buildObservedMetadataValueMap(rawFiles), [rawFiles]);
   return (
     <section className="form-panel">
-      <div className="panel-title">
-        <div>
-          <h3>{text.metadataForm}</h3>
-          <p>Filter the files in this resource.</p>
-        </div>
-        <button type="button" onClick={onClear}>
-          {text.clear}
-        </button>
-      </div>
-
-      {isLoading ? <p className="muted">{text.loadingShaclForm}</p> : null}
+      {isLoading && !profile?.shapes ? <p className="muted">{text.loadingShaclForm}</p> : null}
       {!isLoading && !profile?.shapes ? (
         <p className="muted">No SHACL application profile is available for this resource.</p>
       ) : null}
-      {!isLoading && profile?.shapes ? (
+      {profile?.shapes ? (
         <SearchShaclFormHost
           key={formKey}
           numericRangeStats={numericRangeStats}
@@ -929,11 +887,27 @@ function SearchShaclFormHost({
   selectedLanguage,
   shapes,
 }) {
+  const text = useAppText();
   const fields = useMemo(
     () => buildNativeSearchFields(shapes, observedMetadataValues, numericRangeStats, selectedLanguage),
     [numericRangeStats, observedMetadataValues, selectedLanguage, shapes],
   );
+
+  useEffect(() => {
+    console.info('[Coscine search] Fields constructed', {
+      fieldCount: fields.length,
+      observedMetadataPaths: Array.from(observedMetadataValues.keys()),
+      numericRangePaths: Array.from(numericRangeStats.keys()),
+      fields: fields.map((field) => ({
+        kind: field.kind,
+        label: field.label,
+        path: field.path,
+        valueCount: field.values?.length ?? 0,
+      })),
+    });
+  }, [fields, numericRangeStats, observedMetadataValues]);
   const [textValues, setTextValues] = useState({});
+  const [showReadonlyFields, setShowReadonlyFields] = useState(false);
   const [rangeValues, setRangeValues] = useState(() =>
     Object.fromEntries(
       fields
@@ -942,17 +916,31 @@ function SearchShaclFormHost({
     ),
   );
   const rangeLabels = getRangeLabels(selectedLanguage);
+  const hasReadonlyFields = fields.some((field) => field.kind === 'readonly');
+  const visibleFields = showReadonlyFields
+    ? fields
+    : fields.filter((field) => field.kind !== 'readonly');
+
+  useEffect(() => {
+    setShowReadonlyFields(false);
+  }, [shapes]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      onSerializedChange(
+        JSON.stringify(
+          Object.entries(textValues)
+            .filter(([, fieldValue]) => String(fieldValue).trim() !== '')
+            .map(([fieldPath, fieldValue]) => ({ path: fieldPath, value: fieldValue })),
+        ),
+      );
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [onSerializedChange, textValues]);
 
   const updateTextFilter = (path, value) => {
-    const nextValues = { ...textValues, [path]: value };
-    setTextValues(nextValues);
-    onSerializedChange(
-      JSON.stringify(
-        Object.entries(nextValues)
-          .filter(([, fieldValue]) => String(fieldValue).trim() !== '')
-          .map(([fieldPath, fieldValue]) => ({ path: fieldPath, value: fieldValue })),
-      ),
-    );
+    setTextValues((values) => ({ ...values, [path]: value }));
   };
 
   const updateRangeFilter = (field, index, value) => {
@@ -960,22 +948,28 @@ function SearchShaclFormHost({
     const nextRange = [...current];
     nextRange[index] = value;
     setRangeValues((ranges) => ({ ...ranges, [field.path]: nextRange }));
-    const min = formInputToRangeValue({ type: field.inputType, value: nextRange[0] });
-    const max = formInputToRangeValue({ type: field.inputType, value: nextRange[1] });
+    const normalizeBound = (bound) => field.inputType === 'number' && bound !== '' ? Number(bound) : bound;
 
-    onRangeFiltersChange((filters) => ({
-      ...filters,
-      [field.path]: [
-        Number.isFinite(min) ? min : Number.NEGATIVE_INFINITY,
-        Number.isFinite(max) ? max : Number.POSITIVE_INFINITY,
-      ],
-    }));
+    onRangeFiltersChange((filters) => {
+      const nextFilters = { ...filters };
+      if (nextRange.every((bound) => bound === '')) {
+        delete nextFilters[field.path];
+      } else {
+        nextFilters[field.path] = nextRange.map(normalizeBound);
+      }
+      return nextFilters;
+    });
   };
 
   return (
     <div className="native-search-form">
-      {fields.map((field) => (
-        <div className="native-search-field" key={field.path} title={field.description || undefined}>
+      <div className="native-search-fields-scroll">
+        {visibleFields.map((field) => (
+          <div
+            className={`native-search-field${field.kind === 'readonly' ? ' is-readonly' : ''}`}
+            key={field.path}
+            title={field.description || undefined}
+          >
           <label htmlFor={field.id}>{field.label}</label>
           {field.kind === 'readonly' ? (
             <input id={field.id} readOnly value={field.displayValue} />
@@ -1017,76 +1011,263 @@ function SearchShaclFormHost({
               onChange={(event) => updateTextFilter(field.path, event.target.value)}
             />
           )}
-        </div>
-      ))}
+          </div>
+        ))}
+        {!fields.length ? <p className="muted">{text.noFilterFields}</p> : null}
+      </div>
+      {hasReadonlyFields ? (
+        <label className="native-search-readonly-toggle">
+          <input
+            type="checkbox"
+            checked={showReadonlyFields}
+            onChange={(event) => setShowReadonlyFields(event.target.checked)}
+          />
+          <span>{text.showReadonlyFields}</span>
+        </label>
+      ) : null}
     </div>
   );
 }
 
-function FileTable({ apiToken, files, isLoading, onSelectFile, resource, selectedFilePath, service }) {
+function FileTable({
+  currentPage,
+  files,
+  hasSearched,
+  isLoading,
+  onPageChange,
+  onSelectFile,
+  previewIcons,
+  profile,
+  selectedFilePath,
+  selectedLanguage,
+  totalPages,
+}) {
   const text = useAppText();
+  const metadataLabelsByPath = useMemo(
+    () => collectShapeLabelsByPath(profile?.shapes, selectedLanguage),
+    [profile?.shapes, selectedLanguage],
+  );
+  const metadataSummaries = useMemo(
+    () => new Map(
+      files.map((file) => [
+        file,
+        buildCoreMetadataSummary(file.metadata, metadataLabelsByPath, selectedLanguage),
+      ]),
+    ),
+    [files, metadataLabelsByPath, selectedLanguage],
+  );
 
   return (
     <section className="files-panel">
-      <div className="panel-title">
-        <h3>{text.files}</h3>
-        {isLoading ? <span>{text.loading}</span> : null}
-      </div>
+      {files.length ? (
+        <div className="file-result-list" role="listbox" aria-label={text.files}>
+          {files.map((file, index) => {
+            const path = searchFilePath(file);
+            const selected = selectedFilePath === path;
+            const fileSize = getSearchFileSize(file);
+            const fileType = getSearchFileType(file, path);
+            const metadataSummary = metadataSummaries.get(file);
+            const previewIcon = previewIcons.get(path);
+            const extension = path.includes('.') ? path.split('.').pop().slice(0, 5).toUpperCase() : 'FILE';
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{text.file}</th>
-              <th>{text.download}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {files.length ? (
-              files.map((file, index) => (
-                <tr
-                  className={selectedFilePath === searchFilePath(file) ? 'selected-file-row' : ''}
-                  key={`${searchFilePath(file)}-${index}`}
-                  onClick={() => onSelectFile(file)}
-                >
-                  <td>{searchFilePath(file) || 'Untitled file'}</td>
-                  <td>
-                    <button
-                      className="download-button"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        downloadSearchFile({ apiToken, file, resource, service });
-                      }}
-                    >
-                      {text.download}
-                    </button>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td className="empty-cell" colSpan="2">
-                  {isLoading ? 'Loading files...' : 'No files match the current metadata filter.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            return (
+              <button
+                aria-selected={selected}
+                aria-busy={previewIcon?.status === 'loading'}
+                className={selected ? 'file-result-button selected' : 'file-result-button'}
+                key={`${path}-${index}`}
+                role="option"
+                type="button"
+                onClick={() => onSelectFile(file)}
+              >
+                <span className="file-result-content">
+                  <strong title={path || undefined}>{metadataSummary.title}</strong>
+                  <span className="file-result-metadata-summary">
+                    {metadataSummary.detailItems.length
+                      ? metadataSummary.detailItems.map((item, detailIndex) => (
+                        <React.Fragment key={item.label}>
+                          {detailIndex ? ' · ' : ''}<b>{item.label}:</b> {item.value}
+                        </React.Fragment>
+                      ))
+                      : [
+                        fileType,
+                        Number.isFinite(fileSize) ? formatBytes(fileSize) : '',
+                      ].filter(Boolean).join(' · ') || 'Metadata record'}
+                  </span>
+                </span>
+                <span className={`file-result-thumbnail${previewIcon?.status === 'loading' ? ' is-loading' : ''}`}>
+                  {previewIcon?.url
+                    ? <img src={previewIcon.url} alt="" />
+                    : <span>{extension}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="empty-state search-empty-results">
+          {isLoading
+            ? text.searching
+            : hasSearched
+              ? text.noMatchingFiles
+              : 'Search results appear as you fill the metadata form.'}
+        </div>
+      )}
+      {files.length && totalPages > 1 ? (
+        <div className="file-list-pagination" aria-label="File list pages">
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            aria-label="Previous file page"
+          >‹</button>
+          <span>{currentPage} / {totalPages}</span>
+          <button
+            type="button"
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            aria-label="Next file page"
+          >›</button>
+        </div>
+      ) : null}
     </section>
   );
+}
+
+function useFilePreviewIcons({ apiToken, files, resource, service }) {
+  const [previewIcons, setPreviewIcons] = useState(() => new Map());
+
+  useEffect(() => {
+    let active = true;
+    let queueIndex = 0;
+    const objectUrls = new Set();
+    const controllers = new Set();
+    const descriptors = files
+      .map((file) => {
+        const path = searchFilePath(file);
+        return path ? {
+          file,
+          path,
+          key: filePreviewCacheKey(resource.projectId, resource.resourceId, path),
+          fingerprint: filePreviewFingerprint(file, path),
+        } : null;
+      })
+      .filter(Boolean);
+
+    setPreviewIcons(new Map(descriptors.map(({ path }) => [path, { status: 'queued', url: '' }])));
+
+    const setEntry = (path, entry) => {
+      if (!active) return;
+      setPreviewIcons((current) => {
+        const next = new Map(current);
+        next.set(path, entry);
+        return next;
+      });
+    };
+
+    const useBlob = (path, blob) => {
+      if (!active) return;
+      const url = URL.createObjectURL(blob);
+      objectUrls.add(url);
+      setEntry(path, { status: 'ready', url });
+    };
+
+    const createMissingPreview = async (descriptor) => {
+      await waitForBackgroundTurn();
+      if (!active) return;
+      setEntry(descriptor.path, { status: 'loading', url: '' });
+      const declaredType = String(
+        descriptor.file?.fileType ?? descriptor.file?.contentType ?? descriptor.file?.mimeType ?? '',
+      );
+      const contentType = declaredType || inferContentTypeFromPath(descriptor.path);
+      const kind = getPreviewKind(contentType, descriptor.path);
+      const needsDownload = kind === 'image' || kind === 'text'
+        || (kind === 'tabular' && isDelimitedTabularFile(contentType, descriptor.path));
+      let blob;
+      let shouldCache = true;
+
+      try {
+        if (needsDownload) {
+          const controller = new AbortController();
+          controllers.add(controller);
+          try {
+            const response = await service.downloadFile(apiToken, {
+              projectId: resource.projectId,
+              resourceId: resource.resourceId,
+              path: descriptor.path,
+              signal: controller.signal,
+            });
+            blob = await createFileListPreview({ response, path: descriptor.path, kind, contentType });
+          } finally {
+            controllers.delete(controller);
+          }
+        } else {
+          blob = createTypeThumbnail(descriptor.path, kind);
+        }
+      } catch (error) {
+        if (!active || error?.name === 'AbortError') return;
+        blob = createTypeThumbnail(descriptor.path, kind);
+        shouldCache = false;
+      }
+
+      if (!active) return;
+      if (shouldCache) await cacheFilePreview({ ...descriptor, blob });
+      useBlob(descriptor.path, blob);
+    };
+
+    const run = async () => {
+      const cached = await readCachedFilePreviews(descriptors);
+      if (!active) return;
+      const missing = [];
+
+      for (const descriptor of descriptors) {
+        const blob = cached.get(descriptor.key);
+        if (blob) useBlob(descriptor.path, blob);
+        else missing.push(descriptor);
+      }
+
+      const worker = async () => {
+        while (active && queueIndex < missing.length) {
+          const descriptor = missing[queueIndex];
+          queueIndex += 1;
+          await createMissingPreview(descriptor);
+        }
+      };
+
+      await Promise.all([worker(), worker()]);
+    };
+
+    run().catch(() => {});
+
+    return () => {
+      active = false;
+      for (const controller of controllers) controller.abort();
+      for (const url of objectUrls) URL.revokeObjectURL(url);
+    };
+  }, [apiToken, files, resource.projectId, resource.resourceId, service]);
+
+  return previewIcons;
+}
+
+function waitForBackgroundTurn() {
+  return new Promise((resolve) => {
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(resolve, { timeout: 500 });
+    } else {
+      window.setTimeout(resolve, 0);
+    }
+  });
 }
 
 function FilePreview({ apiToken, file, profile, resource, selectedLanguage, service }) {
   const text = useAppText();
   const [previewState, setPreviewState] = useState({
-    csvRows: [],
     error: '',
     isTruncated: false,
     isLoading: false,
     kind: 'empty',
     objectUrl: '',
+    tabularPreview: null,
     text: '',
     type: '',
   });
@@ -1099,15 +1280,16 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
   useEffect(() => {
     let isActive = true;
     let objectUrl = '';
+    const previewController = new AbortController();
 
     if (!file) {
       setPreviewState({
-        csvRows: [],
         error: '',
         isTruncated: false,
         isLoading: false,
         kind: 'empty',
         objectUrl: '',
+        tabularPreview: null,
         text: '',
         type: '',
       });
@@ -1115,12 +1297,12 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
     }
 
     setPreviewState({
-      csvRows: [],
       error: '',
       isTruncated: false,
       isLoading: true,
       kind: 'loading',
       objectUrl: '',
+      tabularPreview: null,
       text: '',
       type: '',
     });
@@ -1129,18 +1311,43 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
       projectId: resource.projectId,
       resourceId: resource.resourceId,
       path,
+      signal: previewController.signal,
     })
       .then(async (response) => {
-        const blob = await response.blob();
-        const type = blob.type || response.headers.get('content-type') || inferContentTypeFromPath(path);
+        const type = response.headers.get('content-type') || inferContentTypeFromPath(path);
         const kind = getPreviewKind(type, path);
+        let blob = null;
+        let tabularPreview = null;
+
+        if (kind === 'tabular' && isDelimitedTabularFile(type, path)) {
+          const rawText = await response.text();
+          const byteLength = new TextEncoder().encode(rawText).byteLength;
+          if (byteLength > MAX_TABULAR_PREVIEW_BYTES) {
+            throw new Error('This tabular file is too large to preview safely in the browser.');
+          }
+          const { parseDelimitedPreview } = await import('./delimitedPreview.js');
+          tabularPreview = parseDelimitedPreview(rawText, path);
+        } else {
+          blob = await response.blob();
+        }
+
         objectUrl = kind === 'image' || kind === 'pdf' ? URL.createObjectURL(blob) : '';
-        const needsText = kind === 'text' || kind === 'csv';
-        const isByteTruncated = needsText && blob.size > MAX_TEXT_PREVIEW_BYTES;
+        const needsText = kind === 'text';
+        const isByteTruncated = needsText && blob?.size > MAX_TEXT_PREVIEW_BYTES;
         const previewBlob = isByteTruncated ? blob.slice(0, MAX_TEXT_PREVIEW_BYTES) : blob;
         const rawText = needsText ? await previewBlob.text() : '';
-        const csvPreview = kind === 'csv' ? parseCsvPreview(rawText) : null;
-        const isTruncated = isByteTruncated || Boolean(csvPreview?.isTruncated);
+
+        if (kind === 'tabular' && !tabularPreview) {
+          if (blob.size > MAX_TABULAR_PREVIEW_BYTES) {
+            throw new Error('This tabular file is too large to preview safely in the browser.');
+          }
+          const { parseTabularPreview } = await import('./tabularPreview.js');
+          tabularPreview = parseTabularPreview(await blob.arrayBuffer());
+        }
+
+        const isTruncated = isByteTruncated || Boolean(
+          tabularPreview && !tabularPreview.getPage && tabularPreview.rowCount > tabularPreview.rows.length,
+        );
         const text = kind === 'text'
           ? `${rawText}${isTruncated ? '\n\n… Preview truncated.' : ''}`
           : '';
@@ -1149,28 +1356,28 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
         }
 
         setPreviewState({
-          csvRows: csvPreview?.rows ?? [],
           error: '',
           isTruncated,
           isLoading: false,
           kind,
           objectUrl,
+          tabularPreview,
           text,
           type,
         });
       })
       .catch((previewError) => {
-        if (!isActive) {
+        if (!isActive || previewError?.name === 'AbortError') {
           return;
         }
 
         setPreviewState({
-          csvRows: [],
           error: previewError.message || 'Could not load the file preview.',
           isTruncated: false,
           isLoading: false,
           kind: 'error',
           objectUrl: '',
+          tabularPreview: null,
           text: '',
           type: '',
         });
@@ -1178,6 +1385,7 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
 
     return () => {
       isActive = false;
+      previewController.abort();
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
       }
@@ -1186,41 +1394,36 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
 
   return (
     <section className="file-preview-panel">
-      <div className="panel-title">
-        <div>
-          <h3>Preview</h3>
-          <p>{path || 'Select a file to preview.'}</p>
-        </div>
-      </div>
-
       {file ? (
-        <button
-          className="preview-download-button"
-          type="button"
-          onClick={() => downloadSearchFile({ apiToken, file, resource, service })}
-        >
-          {text.download}
-        </button>
+        <div className="file-preview-actions">
+          <button
+            className="inspector-download-button"
+            type="button"
+            onClick={() => downloadSearchFile({ apiToken, file, resource, service })}
+          >
+            {text.download}
+          </button>
+        </div>
       ) : null}
 
-      {previewState.kind === 'empty' ? <div className="empty-state">Select a file to preview it.</div> : null}
-      {previewState.isLoading ? <div className="empty-state">Loading preview...</div> : null}
-      {previewState.kind === 'error' ? <div className="alert preview-alert">{previewState.error}</div> : null}
-      {previewState.kind === 'image' ? (
+      {!file ? <div className="empty-state inspector-empty-state">{text.selectFilePrompt}</div> : null}
+      {file && previewState.isLoading ? <div className="empty-state">{text.loadingPreview}</div> : null}
+      {file && previewState.kind === 'error' ? <div className="alert preview-alert">{previewState.error}</div> : null}
+      {file && previewState.kind === 'image' ? (
         <div className="file-preview-media">
           <img src={previewState.objectUrl} alt={path} />
         </div>
       ) : null}
-      {previewState.kind === 'pdf' ? (
+      {file && previewState.kind === 'pdf' ? (
         <iframe className="file-preview-frame" src={previewState.objectUrl} title={path} />
       ) : null}
-      {previewState.kind === 'text' ? (
+      {file && previewState.kind === 'text' ? (
         <pre className="file-preview-text">{previewState.text || 'The file is empty.'}</pre>
       ) : null}
-      {previewState.kind === 'csv' ? (
-        <CsvPreviewTable rows={previewState.csvRows} isTruncated={previewState.isTruncated} />
+      {file && previewState.kind === 'tabular' ? (
+        <TabularPreviewTable preview={previewState.tabularPreview} isTruncated={previewState.isTruncated} />
       ) : null}
-      {previewState.kind === 'unsupported' ? (
+      {file && previewState.kind === 'unsupported' ? (
         <dl className="upload-facts upload-facts-compact">
           <div>
             <dt>File</dt>
@@ -1235,7 +1438,6 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
 
       {file ? (
         <section className="file-metadata">
-          <h4>Metadata</h4>
           {metadataRows.length ? (
             <dl className="file-metadata__list">
               {metadataRows.map((row) => (
@@ -1246,7 +1448,7 @@ function FilePreview({ apiToken, file, profile, resource, selectedLanguage, serv
               ))}
             </dl>
           ) : (
-            <p className="muted">No readable Coscine metadata is available for this file.</p>
+            <p className="muted">{text.noReadableMetadata}</p>
           )}
         </section>
       ) : null}
@@ -1277,34 +1479,71 @@ async function downloadSearchFile({ apiToken, file, resource, service }) {
   }
 }
 
-function CsvPreviewTable({ rows, isTruncated }) {
-  if (!rows.length) {
-    return <div className="empty-state">The CSV file is empty.</div>;
+function TabularPreviewTable({ preview, isTruncated }) {
+  const headers = preview?.headers ?? [];
+  const rows = preview?.rows ?? [];
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(preview.rowCount / TABULAR_PREVIEW_PAGE_ROWS));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const firstRowIndex = (safeCurrentPage - 1) * TABULAR_PREVIEW_PAGE_ROWS;
+  const visibleRows = useMemo(
+    () => preview.getPage
+      ? preview.getPage(safeCurrentPage, TABULAR_PREVIEW_PAGE_ROWS)
+      : rows.slice(firstRowIndex, firstRowIndex + TABULAR_PREVIEW_PAGE_ROWS),
+    [firstRowIndex, preview, rows, safeCurrentPage],
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [preview]);
+
+  if (!headers.length) {
+    return <div className="empty-state">The tabular file is empty.</div>;
   }
 
-  const [header, ...body] = rows;
-
   return (
-    <div className="csv-preview">
-      <div className="csv-preview__summary">
-        <span>{body.length} preview row{body.length === 1 ? '' : 's'}</span>
-        {isTruncated ? <span>Preview truncated</span> : null}
+    <div className="tabular-preview">
+      <div className="tabular-preview__summary">
+        <span>
+          {preview.rowCount
+            ? `${firstRowIndex + 1}–${firstRowIndex + visibleRows.length} of ${preview.rowCount}`
+            : '0'} row{preview.rowCount === 1 ? '' : 's'}
+          {preview.sheetName ? ` · ${preview.sheetName}` : ''}
+        </span>
+        {totalPages > 1 ? (
+          <div className="tabular-preview__pagination" aria-label="Table pages">
+            <button
+              type="button"
+              disabled={safeCurrentPage === 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              aria-label="Previous table page"
+            >‹</button>
+            <span>{safeCurrentPage} / {totalPages}</span>
+            <button
+              type="button"
+              disabled={safeCurrentPage === totalPages}
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              aria-label="Next table page"
+            >›</button>
+          </div>
+        ) : isTruncated ? <span>Preview truncated</span> : null}
       </div>
-      <div className="csv-preview__scroll">
+      {preview.layoutNote ? <p className="tabular-preview__layout-note">{preview.layoutNote}</p> : null}
+      <div className="tabular-preview__scroll">
         <table>
           <thead>
             <tr>
-              {header.map((cell, index) => (
-                <th key={`header-${index}`} title={cell}>{cell || `Column ${index + 1}`}</th>
+              {headers.map((cell, index) => (
+                <th key={`header-${index}`} title={cell}>{cell}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {body.map((row, rowIndex) => (
-              <tr key={`row-${rowIndex}`}>
-                {header.map((_, columnIndex) => {
+            {visibleRows.map((row, rowIndex) => (
+              <tr key={`row-${firstRowIndex + rowIndex}`}>
+                {headers.map((_, columnIndex) => {
                   const cell = row[columnIndex] ?? '';
-                  return <td key={`cell-${rowIndex}-${columnIndex}`} title={cell}>{cell}</td>;
+                  return <td key={`cell-${firstRowIndex + rowIndex}-${columnIndex}`} title={cell}>{cell}</td>;
                 })}
               </tr>
             ))}
@@ -1313,86 +1552,6 @@ function CsvPreviewTable({ rows, isTruncated }) {
       </div>
     </div>
   );
-}
-
-function parseCsvPreview(text) {
-  const delimiter = detectCsvDelimiter(text);
-  const rows = [];
-  let row = [];
-  let field = '';
-  let quoted = false;
-  let index = 0;
-  let isTruncated = false;
-
-  const pushField = () => {
-    if (row.length < MAX_CSV_PREVIEW_COLUMNS) {
-      row.push(field.trim());
-    } else {
-      isTruncated = true;
-    }
-    field = '';
-  };
-  const pushRow = () => {
-    pushField();
-    if (row.some((value) => value !== '')) {
-      rows.push(row);
-    }
-    row = [];
-  };
-
-  while (index < text.length && rows.length < MAX_CSV_PREVIEW_ROWS + 1) {
-    const character = text[index];
-
-    if (character === '"') {
-      if (quoted && text[index + 1] === '"') {
-        field += '"';
-        index += 2;
-        continue;
-      }
-      quoted = !quoted;
-    } else if (character === delimiter && !quoted) {
-      pushField();
-    } else if ((character === '\n' || character === '\r') && !quoted) {
-      if (character === '\r' && text[index + 1] === '\n') {
-        index += 1;
-      }
-      pushRow();
-    } else {
-      field += character;
-    }
-
-    index += 1;
-  }
-
-  if ((field || row.length) && rows.length < MAX_CSV_PREVIEW_ROWS + 1) {
-    pushRow();
-  }
-
-  if (index < text.length || rows.length > MAX_CSV_PREVIEW_ROWS + 1) {
-    isTruncated = true;
-  }
-
-  return {
-    isTruncated,
-    rows: rows.slice(0, MAX_CSV_PREVIEW_ROWS + 1),
-  };
-}
-
-function detectCsvDelimiter(text) {
-  const sampleLine = String(text ?? '').split(/\r?\n/, 1)[0] ?? '';
-  const candidates = [',', ';', '\t', '|'];
-  let selected = ',';
-  let selectedCount = -1;
-
-  for (const candidate of candidates) {
-    const count = sampleLine.split(candidate).length - 1;
-    if (count > selectedCount) {
-      selected = candidate;
-      selectedCount = count;
-    }
-  }
-
-  return selected;
 }
 
 function getPreviewKind(contentType, path) {
@@ -1407,8 +1566,19 @@ function getPreviewKind(contentType, path) {
     return 'pdf';
   }
 
-  if (normalizedType === 'text/csv' || normalizedPath.endsWith('.csv')) {
-    return 'csv';
+  if (
+    [
+      'text/csv',
+      'text/tab-separated-values',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel.sheet.macroenabled.12',
+      'application/vnd.ms-excel.sheet.binary.macroenabled.12',
+      'application/vnd.oasis.opendocument.spreadsheet',
+    ].includes(normalizedType) ||
+    /\.(csv|tsv|xls|xlsx|xlsm|xlsb|ods|html?|htm)$/i.test(normalizedPath)
+  ) {
+    return 'tabular';
   }
 
   if (
@@ -1424,12 +1594,20 @@ function getPreviewKind(contentType, path) {
       'application/n-quads',
       'text/turtle',
     ].includes(normalizedType) ||
-    /\.(csv|json|jsonld|md|n3|nt|ttl|txt|xml|yaml|yml)$/i.test(normalizedPath)
+    /\.(json|jsonld|md|n3|nt|ttl|txt|xml|yaml|yml)$/i.test(normalizedPath)
   ) {
     return 'text';
   }
 
   return 'unsupported';
+}
+
+function isDelimitedTabularFile(contentType, path) {
+  const normalizedType = String(contentType ?? '').split(';')[0].trim().toLowerCase();
+  return (
+    ['text/csv', 'text/tab-separated-values', 'application/csv'].includes(normalizedType) ||
+    /\.(csv|tsv)$/i.test(String(path ?? ''))
+  );
 }
 
 function inferContentTypeFromPath(path) {
@@ -1443,7 +1621,21 @@ function inferContentTypeFromPath(path) {
     return `image/${normalizedPath.split('.').pop().replace('jpg', 'jpeg')}`;
   }
 
-  if (/\.(csv|json|jsonld|md|n3|nt|ttl|txt|xml|yaml|yml)$/i.test(normalizedPath)) {
+  const tabularTypes = {
+    csv: 'text/csv',
+    tsv: 'text/tab-separated-values',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+    xlsb: 'application/vnd.ms-excel.sheet.binary.macroEnabled.12',
+    ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  };
+  const extension = normalizedPath.split('.').pop();
+  if (tabularTypes[extension]) {
+    return tabularTypes[extension];
+  }
+
+  if (/\.(html?|json|jsonld|md|n3|nt|ttl|txt|xml|yaml|yml)$/i.test(normalizedPath)) {
     return 'text/plain';
   }
 
@@ -1497,7 +1689,7 @@ function parseFieldFilters(filterText) {
         .filter((entry) => entry?.path && entry?.value !== undefined)
         .map((entry) => ({
           path: entry.path,
-          value: normalizeTextFilterValue(entry.value),
+          value: String(entry.value ?? '').trim().replace(/^<|>$/g, ''),
         }))
         .filter((entry) => entry.value !== '');
     }
@@ -2431,6 +2623,24 @@ function buildObservedMetadataValueMap(files) {
       continue;
     }
 
+    if (file.metadata && typeof file.metadata === 'object') {
+      for (const [path, rawValues] of Object.entries(file.metadata)) {
+        if (path.startsWith('@')) {
+          continue;
+        }
+
+        for (const rawValue of Array.isArray(rawValues) ? rawValues : [rawValues]) {
+          addValue(
+            path,
+            rawValue && typeof rawValue === 'object'
+              ? rawValue.value ?? rawValue.label ?? rawValue['@value'] ?? rawValue['@id']
+              : rawValue,
+          );
+        }
+      }
+      continue;
+    }
+
     try {
       for (const item of parseRdfMetadataQuads(file.metadata)) {
         if (item.object.termType === 'Literal' || item.object.termType === 'NamedNode') {
@@ -2468,11 +2678,6 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
 
       seenPaths.add(path);
       const observedValues = findObservedMetadataValues(observedMetadataValues, path);
-
-      // A filter that cannot match any file has no useful meaning.
-      if (!observedValues.length) {
-        continue;
-      }
 
       const datatype = getFirstQuadObjectValue(quads, propertyShape, SH_DATATYPE);
       const label = getPreferredQuadLiteral(quads, propertyShape, SH_NAME, preferredLanguage)
@@ -2521,6 +2726,30 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
         continue;
       }
 
+      if (isDate || isNumeric) {
+        fields.push({
+          description,
+          displayValue: '-',
+          id,
+          kind: 'readonly',
+          label,
+          path,
+        });
+        continue;
+      }
+
+      if (!observedValues.length) {
+        fields.push({
+          description,
+          displayValue: '-',
+          id,
+          kind: 'readonly',
+          label,
+          path,
+        });
+        continue;
+      }
+
       if (observedValues.length === 1) {
         fields.push({
           description,
@@ -2536,7 +2765,9 @@ function buildNativeSearchFields(shapes, observedMetadataValues, numericRangeSta
       fields.push({
         description,
         id,
-        kind: isChoice || observedValues.length < MAX_SEARCH_SELECT_VALUES ? 'select' : 'text',
+        kind: observedValues.length && (isChoice || observedValues.length < MAX_SEARCH_SELECT_VALUES)
+          ? 'select'
+          : 'text',
         label,
         path,
         values: observedValues,
@@ -2685,9 +2916,24 @@ function extractTextMetadataValueMap(metadata) {
   return valueMap;
 }
 
-function buildFileMetadataRows(metadata, shapes, preferredLanguage = 'en') {
+function buildFileMetadataRows(metadata, shapes, preferredLanguage = 'en', providedLabelsByPath = null) {
   const rows = new Map();
-  const labelsByPath = collectShapeLabelsByPath(shapes, preferredLanguage);
+  const labelsByPath = providedLabelsByPath ?? collectShapeLabelsByPath(shapes, preferredLanguage);
+  const technicalSearchFields = new Set([
+    'absolutefilename', 'filename', 'graphname', 'homepage', 'ispublic',
+    'structuretype', 'version', 'belongstoproject',
+  ]);
+  const findMetadataLabel = (path) => {
+    if (labelsByPath.has(path)) {
+      return labelsByPath.get(path);
+    }
+
+    const normalizedPath = normalizeRangePath(path);
+    const matches = Array.from(labelsByPath.entries()).filter(
+      ([shapePath]) => normalizeRangePath(shapePath) === normalizedPath,
+    );
+    return matches.length === 1 ? matches[0][1] : findFieldLabelFromPath(path);
+  };
   const addValue = (path, value) => {
     const normalizedPath = String(path ?? '').trim();
     const normalizedValue = String(value ?? '').trim();
@@ -2697,7 +2943,7 @@ function buildFileMetadataRows(metadata, shapes, preferredLanguage = 'en') {
     }
 
     const row = rows.get(normalizedPath) ?? {
-      label: labelsByPath.get(normalizedPath) || findFieldLabelFromPath(normalizedPath),
+      label: findMetadataLabel(normalizedPath),
       path: normalizedPath,
       values: [],
     };
@@ -2726,6 +2972,20 @@ function buildFileMetadataRows(metadata, shapes, preferredLanguage = 'en') {
         }
       }
     }
+  } else if (metadata && typeof metadata === 'object') {
+    for (const [path, rawValues] of Object.entries(metadata)) {
+      if (technicalSearchFields.has(path.toLowerCase())) {
+        continue;
+      }
+
+      for (const rawValue of Array.isArray(rawValues) ? rawValues : [rawValues]) {
+        if (rawValue && typeof rawValue === 'object') {
+          addValue(path, rawValue.value ?? rawValue.label ?? rawValue['@value'] ?? rawValue['@id']);
+        } else {
+          addValue(path, rawValue);
+        }
+      }
+    }
   } else {
     try {
       for (const item of parseRdfMetadataQuads(metadata)) {
@@ -2743,6 +3003,102 @@ function buildFileMetadataRows(metadata, shapes, preferredLanguage = 'en') {
   }
 
   return Array.from(rows.values());
+}
+
+const CORE_METADATA_ALIASES = {
+  title: [
+    'title', 'maintitle', 'resourcetitle', 'datasettitle', 'objecttitle', 'worktitle',
+    'alternativetitle', 'subtitle', 'shorttitle', 'headline', 'caption', 'preflabel',
+    'preferredlabel', 'titel', 'haupttitel', 'name', 'resourcename', 'datasetname',
+    'objectname', 'label',
+  ],
+  creator: [
+    'creator', 'creators', 'creatorname', 'creatornames', 'hascreator', 'author',
+    'authors', 'authorname', 'authornames', 'hasauthor', 'createdby', 'authoredby',
+    'primaryauthor', 'principalinvestigator', 'principalinvestigators', 'investigator',
+    'investigators', 'originator', 'maker', 'artist', 'photographer', 'contributor',
+    'contributors', 'autor', 'autoren', 'ersteller', 'urheber',
+  ],
+  date: [
+    'date', 'dates', 'datetime', 'datecreated', 'creationdate', 'created', 'createdat',
+    'creationtime', 'creationyear', 'dateissued', 'issued', 'issuedat', 'datepublished',
+    'publicationdate', 'publicationyear', 'published', 'publishedat', 'modified',
+    'modifiedat', 'datemodified', 'modificationdate', 'lastmodified', 'updated',
+    'updatedat', 'generatedattime', 'capturedate', 'acquisitiondate', 'recordingdate',
+    'copyrightyear', 'timestamp', 'year', 'datum',
+    'erstellungsdatum', 'aufnahmedatum', 'veroeffentlichungsdatum', 'anderungsdatum',
+  ],
+};
+
+function buildCoreMetadataSummary(metadata, labelsByPath, selectedLanguage = 'en') {
+  const rows = buildFileMetadataRows(metadata, '', selectedLanguage, labelsByPath);
+  const matches = { title: null, creator: null, date: null };
+
+  for (const row of rows) {
+    for (const kind of Object.keys(matches)) {
+      const score = coreMetadataMatchScore(row, kind);
+
+      if (Number.isFinite(score) && (!matches[kind] || score < matches[kind].score)) {
+        matches[kind] = { row, score };
+      }
+    }
+  }
+
+  const title = formatCoreMetadataValues(matches.title?.row.values)
+    || (selectedLanguage === 'de' ? 'Metadatensatz ohne Titel' : 'Untitled metadata record');
+  const creator = formatCoreMetadataValues(matches.creator?.row.values);
+  const date = formatCoreMetadataValues(matches.date?.row.values);
+  const labels = selectedLanguage === 'de'
+    ? { creator: 'Urheber', date: 'Datum' }
+    : { creator: 'Creator', date: 'Date' };
+
+  return {
+    title,
+    detailItems: [
+      creator ? { label: labels.creator, value: creator } : null,
+      date ? { label: labels.date, value: date } : null,
+    ].filter(Boolean),
+  };
+}
+
+function coreMetadataMatchScore(row, kind) {
+  const aliases = CORE_METADATA_ALIASES[kind];
+  const tokens = [normalizeCoreMetadataName(row.path), normalizeCoreMetadataName(row.label)];
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const [tokenIndex, token] of tokens.entries()) {
+    for (const [aliasIndex, alias] of aliases.entries()) {
+      if (token === alias) {
+        bestScore = Math.min(bestScore, aliasIndex + tokenIndex * 100);
+      } else if (alias.length >= 5 && token.endsWith(alias)) {
+        bestScore = Math.min(bestScore, aliasIndex + 50 + tokenIndex * 100);
+      }
+    }
+  }
+
+  return bestScore;
+}
+
+function normalizeCoreMetadataName(value) {
+  return compactMetadataUri(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/\d+$/, '');
+}
+
+function formatCoreMetadataValues(values) {
+  const uniqueValues = Array.from(
+    new Set((values ?? []).map((value) => String(value).trim()).filter(Boolean)),
+  );
+
+  if (!uniqueValues.length) {
+    return '';
+  }
+
+  const visibleValues = uniqueValues.slice(0, 2).join(', ');
+  return uniqueValues.length > 2 ? `${visibleValues} +${uniqueValues.length - 2}` : visibleValues;
 }
 
 function collectShapeLabelsByPath(shapes, preferredLanguage = 'en') {
@@ -2780,6 +3136,24 @@ function extractRangeMetadataValueMap(metadata) {
   const valueMap = new Map();
 
   if (!json) {
+    if (metadata && typeof metadata === 'object') {
+      for (const [predicate, rawValues] of Object.entries(metadata)) {
+        for (const rawValue of Array.isArray(rawValues) ? rawValues : [rawValues]) {
+          const literal = rawValue && typeof rawValue === 'object'
+            ? rawValue.value ?? rawValue['@value']
+            : rawValue;
+          const rangeValue = literalToRangeValue(literal, '');
+
+          if (Number.isFinite(rangeValue)) {
+            const currentValues = valueMap.get(predicate) ?? [];
+            currentValues.push(rangeValue);
+            valueMap.set(predicate, currentValues);
+          }
+        }
+      }
+      return valueMap;
+    }
+
     return extractTurtleRangeMetadataValueMap(metadata);
   }
 
@@ -2950,6 +3324,23 @@ function searchFilePath(file) {
   }
 
   return String(file.path ?? file.name ?? file.fileName ?? file.key ?? file.id ?? '');
+}
+
+function getSearchFileSize(file) {
+  const value = Number(file?.fileSize ?? file?.size ?? file?.contentSize);
+  return Number.isFinite(value) ? value : Number.NaN;
+}
+
+function getSearchFileType(file, path = searchFilePath(file)) {
+  const declaredType = String(file?.fileType ?? file?.contentType ?? file?.mimeType ?? '').trim();
+
+  if (declaredType) {
+    return declaredType.split(';')[0];
+  }
+
+  const fileName = String(path).split('/').pop() || '';
+  const extension = fileName.includes('.') ? fileName.split('.').pop() : '';
+  return extension ? extension.toUpperCase() : '';
 }
 
 function buildSearchClassInstanceRdf(files, shapes) {

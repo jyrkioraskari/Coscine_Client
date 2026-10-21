@@ -8,11 +8,11 @@ Coscine Client is a browser-based React application for working with RWTH Coscin
 ## What It Does
 
 - Connects to the production Coscine API through a local proxy.
-- Loads projects, resources, files, and application profiles available to a Coscine API token.
+- Loads projects, resources, and application profiles available to a Coscine API token.
 - Renders SHACL metadata forms with `@ulb-darmstadt/shacl-form`.
 - Serializes completed metadata as Turtle before upload.
 - Uploads file content and metadata to a selected Coscine path.
-- Provides a search and preview view for resource files.
+- Searches indexed file metadata through Coscine's `/api/v2/search` endpoint and previews matching files.
 - Supports English and German interface text.
 - Can remember selected metadata field values in browser storage.
 
@@ -20,7 +20,7 @@ Coscine Client is a browser-based React application for working with RWTH Coscin
 
 ### Production Resource View
 
-The production workflow loads resources from Coscine, displays files in the selected resource, renders the resource metadata form, and previews downloadable files where possible.
+The production workflow loads resources from Coscine, renders the selected resource's metadata form, and searches Coscine's metadata index without enumerating every stored file. Matching files can be selected for metadata inspection, download, and preview.
 
 ## Requirements
 
@@ -124,13 +124,15 @@ API tokens are entered in the browser and sent as `Authorization` headers only t
 - React 19.
 - Vite 6.
 - N3 for Turtle parsing and serialization.
+- SheetJS for CSV and spreadsheet previews.
 - `@ulb-darmstadt/shacl-form` for SHACL form rendering.
 - A small Node.js server for serving production builds and proxying Coscine API requests.
 
 ## License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE)
-for the complete license terms.
+for the complete license terms. Adapted third-party code and its exact source
+revisions are documented in [THIRD_PARTY_PROVENANCE.md](THIRD_PARTY_PROVENANCE.md).
 
 ## Citation
 

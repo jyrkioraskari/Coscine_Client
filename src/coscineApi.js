@@ -747,6 +747,188 @@ function findCoscineApplicationProfileImports(shapes) {
   }
 }
 
+export async function searchCoscineFiles(
+  apiToken,
+  { resourceId, textFilters = [], rangeFilters = {}, pageNumber = 1, signal },
+) {
+  if (!resourceId) {
+    throw new Error('Resource ID is required for metadata search.');
+  }
+
+  const clauses = textFilters
+    .filter((filter) => filter?.path && String(filter.value ?? '').trim())
+    .map((filter) =>
+      `${coscineSearchField(filter.path)}:"${escapeCoscineSearchValue(filter.value)}"`,
+    );
+
+  for (const [path, range] of Object.entries(rangeFilters)) {
+    const [minimum, maximum] = Array.isArray(range) ? range : [];
+    const lowerBound = coscineSearchRangeBound(minimum);
+    const upperBound = coscineSearchRangeBound(maximum);
+
+    if (lowerBound !== '*' || upperBound !== '*') {
+      clauses.push(`${coscineSearchField(path)}:[${lowerBound} TO ${upperBound}]`);
+    }
+  }
+
+  // Metadata search results identify their resource in graphName and uri. The
+  // wildcard clause keeps filtering server-side instead of enumerating storage.
+  const escapedResourceId = escapeCoscineWildcardValue(resourceId);
+  clauses.push(`(graphName.keyword:*${escapedResourceId}* OR graphName:*${escapedResourceId}*)`);
+
+  const searchParameters = new URLSearchParams({
+    Query: clauses.map((clause) => `(${clause})`).join(' AND '),
+    UseAdvancedSyntax: 'true',
+    Category: 'https://purl.org/coscine/terms/structure#Metadata',
+    PageNumber: String(pageNumber),
+    PageSize: '50',
+  });
+  console.info('[Coscine search] Request', {
+    resourceId,
+    pageNumber,
+    textFilterFields: textFilters.map((filter) => filter?.path).filter(Boolean),
+    rangeFilterFields: Object.keys(rangeFilters),
+    query: searchParameters.get('Query'),
+  });
+
+  let payload;
+  try {
+    payload = await fetchCoscineJson(`/search?${searchParameters}`, apiToken, { signal });
+  } catch (error) {
+    console.error('[Coscine search] API request failed', {
+      resourceId,
+      pageNumber,
+      message: error instanceof Error ? error.message : String(error),
+      query: searchParameters.get('Query'),
+    });
+    throw error;
+  }
+
+  console.info('[Coscine search] API response', summarizeCoscineSearchPayload(payload));
+
+  if (
+    pageNumber === 1 &&
+    textFilters.length === 0 &&
+    Object.keys(rangeFilters).length === 0 &&
+    (!Array.isArray(payload?.data) || payload.data.length === 0)
+  ) {
+    // Some older search indices do not expose the graphName keyword mapping.
+    // A quoted UUID search still scopes the index query to this resource.
+    const fallbackParameters = new URLSearchParams({
+      Query: `"${escapeCoscineSearchValue(resourceId)}"`,
+      UseAdvancedSyntax: 'false',
+      Category: 'https://purl.org/coscine/terms/structure#Metadata',
+      PageNumber: '1',
+      PageSize: '50',
+    });
+    console.warn('[Coscine search] Resource query returned no results; trying compatibility query.', {
+      resourceId,
+      query: fallbackParameters.get('Query'),
+    });
+    payload = await fetchCoscineJson(`/search?${fallbackParameters}`, apiToken, { signal });
+    console.info('[Coscine search] Compatibility response', summarizeCoscineSearchPayload(payload));
+  }
+
+  const results = Array.isArray(payload?.data) ? payload.data : [];
+  const files = results
+    // Both requests are scoped by the resource ID. SearchResultDto.source is
+    // dynamic, so graphName is not reliable enough for a second resource check.
+    .filter((result) => String(result?.type ?? '').endsWith('#Metadata'))
+    .map(normalizeCoscineSearchFile)
+    .filter((file) => file.path && !isInternalCoscinePath(file.path));
+
+  console.info('[Coscine search] Normalized resource results', {
+    resourceId,
+    apiResultCount: results.length,
+    acceptedFileCount: files.length,
+    paths: files.slice(0, 10).map((file) => file.path),
+  });
+
+  return {
+    files,
+    total: Number(payload?.pagination?.totalCount ?? payload?.pagination?.TotalCount ?? files.length),
+    pagination: {
+      currentPage: Number(payload?.pagination?.currentPage ?? payload?.pagination?.CurrentPage ?? pageNumber),
+      totalPages: Number(payload?.pagination?.totalPages ?? payload?.pagination?.TotalPages ?? 1),
+      hasNext: Boolean(payload?.pagination?.hasNext ?? payload?.pagination?.HasNext),
+      hasPrevious: Boolean(payload?.pagination?.hasPrevious ?? payload?.pagination?.HasPrevious),
+    },
+  };
+}
+
+function summarizeCoscineSearchPayload(payload) {
+  const results = Array.isArray(payload?.data) ? payload.data : [];
+  const firstResult = results[0];
+
+  return {
+    resultCount: results.length,
+    pagination: payload?.pagination ?? null,
+    resultTypes: Array.from(new Set(results.map((result) => result?.type).filter(Boolean))),
+    firstResult: firstResult
+      ? {
+          uri: firstResult.uri,
+          graphName: firstResult.source?.graphName,
+          sourceKeys: firstResult.source && typeof firstResult.source === 'object'
+            ? Object.keys(firstResult.source)
+            : [],
+        }
+      : null,
+  };
+}
+
+function coscineSearchField(path) {
+  const normalizedPath = String(path ?? '').replace(/^<|>$/g, '');
+  const separatorIndex = Math.max(
+    normalizedPath.lastIndexOf('#'),
+    normalizedPath.lastIndexOf('/'),
+    normalizedPath.lastIndexOf(':'),
+  );
+  const localName = separatorIndex >= 0 ? normalizedPath.slice(separatorIndex + 1) : normalizedPath;
+  const aliases = {
+    created: 'date_created',
+  };
+
+  return aliases[localName] || localName.replace(/[^A-Za-z0-9_.-]/g, '_');
+}
+
+function escapeCoscineSearchValue(value) {
+  return String(value ?? '').trim().replace(/([\\"])/g, '\\$1');
+}
+
+function escapeCoscineWildcardValue(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/([+\-=!(){}[\]^"~?:\\/]|&&|\|\|)/g, '\\$1');
+}
+
+function coscineSearchRangeBound(value) {
+  if (
+    value === '' ||
+    value === null ||
+    value === undefined ||
+    (!Number.isFinite(value) && typeof value !== 'string')
+  ) {
+    return '*';
+  }
+
+  return typeof value === 'number' ? String(value) : `"${escapeCoscineSearchValue(value)}"`;
+}
+
+function normalizeCoscineSearchFile(result) {
+  const source = result?.source && typeof result.source === 'object' ? result.source : {};
+  const path = String(
+    source.absolutefilename ?? source.absoluteFileName ?? source.path ?? source.fileName ?? '',
+  ).replace(/^\/+/, '');
+
+  return {
+    ...source,
+    path,
+    fileName: source.fileName || path.split('/').pop() || path,
+    metadata: source,
+    searchUri: result?.uri || source.graphName || '',
+  };
+}
+
 export async function fetchCoscineResourceDetails(apiToken, { projectId, resourceId }) {
   if (!projectId || !resourceId) {
     throw new Error('Project ID and resource ID are required.');
@@ -758,25 +940,6 @@ export async function fetchCoscineResourceDetails(apiToken, { projectId, resourc
     files,
     loadedAt: new Date().toISOString(),
   };
-}
-
-export async function downloadCoscineFile(apiToken, { projectId, resourceId, path }) {
-  if (!projectId || !resourceId || !path) {
-    throw new Error('Project ID, resource ID, and file path are required.');
-  }
-
-  if (isInternalCoscinePath(path) || isDirectoryPath(path)) {
-    throw new Error('Select a file to download.');
-  }
-
-  const encodedProjectId = encodeURIComponent(projectId);
-  const encodedResourceId = encodeURIComponent(resourceId);
-  const encodedPath = encodeCoscinePath(path);
-
-  return fetchCoscine(
-    `/projects/${encodedProjectId}/resources/${encodedResourceId}/storage/${encodedPath}/content`,
-    apiToken,
-  );
 }
 
 async function fetchCoscineResourceFiles(apiToken, projectId, resourceId) {
@@ -793,15 +956,13 @@ async function fetchCoscineResourceFiles(apiToken, projectId, resourceId) {
       continue;
     }
 
-    if (isCoscineDirectoryEntry(entry)) {
-      seenFolders.add(path);
-      const children = await fetchCoscineStorageEntries(apiToken, projectId, resourceId, path).catch(() => []);
-      folders.push(...children);
-      continue;
-    }
+    seenFolders.add(path);
+    const children = await fetchCoscineStorageEntries(apiToken, projectId, resourceId, path).catch(() => []);
+    folders.push(...children.filter((child) => isCoscineDirectoryEntry(child)));
 
-    if (isCoscineFileEntry(entry)) {
-      files.push(await withCoscineMetadata(apiToken, projectId, resourceId, entry, path));
+    for (const child of children.filter((item) => isCoscineFileEntry(item))) {
+      const childPath = getCoscineEntryPath(child);
+      files.push(await withCoscineMetadata(apiToken, projectId, resourceId, child, childPath));
     }
   }
 
@@ -842,12 +1003,11 @@ async function fetchCoscineStorageEntries(apiToken, projectId, resourceId, path)
 async function withCoscineMetadata(apiToken, projectId, resourceId, entry, path) {
   const fetchedMetadata = await fetchCoscineFileMetadata(apiToken, projectId, resourceId, path);
   const embeddedMetadata = findEmbeddedCoscineMetadata(entry);
-  const metadata = hasMetadataContent(fetchedMetadata) ? fetchedMetadata : embeddedMetadata;
 
   return {
     ...entry,
     path,
-    metadata,
+    metadata: hasMetadataContent(fetchedMetadata) ? fetchedMetadata : embeddedMetadata,
   };
 }
 
@@ -879,17 +1039,10 @@ async function fetchCoscineFileMetadata(apiToken, projectId, resourceId, path) {
   const encodedPath = encodeCoscinePath(path);
   const metadataBasePath =
     `/projects/${encodedProjectId}/resources/${encodedResourceId}/graphs/${encodedPath}/metadata`;
-
   const versions = await fetchCoscineJson(
     `${metadataBasePath}/versions?OrderBy=${encodeURIComponent('version desc')}&PageSize=1`,
     apiToken,
-  ).catch((error) => {
-    console.warn('[Coscine metadata] Could not list metadata versions; using Coscine\'s current version.', {
-      message: error instanceof Error ? error.message : String(error),
-      path,
-    });
-    return null;
-  });
+  ).catch(() => null);
   const latestVersion = Array.isArray(versions?.data) ? versions.data[0]?.version : '';
   const contentPath = latestVersion
     ? `${metadataBasePath}/content?graphVersion=${encodeURIComponent(latestVersion)}`
@@ -902,36 +1055,17 @@ async function fetchCoscineFileMetadata(apiToken, projectId, resourceId, path) {
       },
     });
     const content = await response.text();
-
     return content || null;
-  } catch (error) {
-    console.warn('[Coscine metadata] Could not load metadata with the user graph-content operation.', {
-      message: error instanceof Error ? error.message : String(error),
-      path,
-    });
+  } catch {
     return null;
   }
 }
 
 function normalizeCoscineCollection(payload) {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-
-  if (Array.isArray(payload?.data)) {
-    return payload.data;
-  }
-
-  if (Array.isArray(payload?.items)) {
-    return payload.items;
-  }
-
-  if (Array.isArray(payload?.children)) {
-    return payload.children;
-  }
-
-  if (Array.isArray(payload?.entries)) {
-    return payload.entries;
+  for (const collection of [payload, payload?.data, payload?.items, payload?.children, payload?.entries]) {
+    if (Array.isArray(collection)) {
+      return collection;
+    }
   }
 
   return [];
@@ -950,6 +1084,7 @@ function isCoscineDirectoryEntry(entry) {
       entry?.isFolder ||
       entry?.isDirectory ||
       entry?.hasChildren ||
+      type === 'tree' ||
       type.includes('folder') ||
       type.includes('directory')
   );
@@ -958,15 +1093,6 @@ function isCoscineDirectoryEntry(entry) {
 function isCoscineFileEntry(entry) {
   const path = getCoscineEntryPath(entry);
   return Boolean(path && !isInternalCoscinePath(path) && !isCoscineDirectoryEntry(entry));
-}
-
-function isDirectoryPath(path) {
-  return String(path ?? '').endsWith('/');
-}
-
-function isInternalCoscinePath(path) {
-  const normalizedPath = String(path ?? '').replace(/^\/+/, '');
-  return normalizedPath === '.coscine' || normalizedPath.startsWith('.coscine/');
 }
 
 function dedupeCoscineFiles(files) {
@@ -981,6 +1107,35 @@ function dedupeCoscineFiles(files) {
   }
 
   return Array.from(uniqueFiles.values());
+}
+
+export async function downloadCoscineFile(apiToken, { projectId, resourceId, path, signal }) {
+  if (!projectId || !resourceId || !path) {
+    throw new Error('Project ID, resource ID, and file path are required.');
+  }
+
+  if (isInternalCoscinePath(path) || isDirectoryPath(path)) {
+    throw new Error('Select a file to download.');
+  }
+
+  const encodedProjectId = encodeURIComponent(projectId);
+  const encodedResourceId = encodeURIComponent(resourceId);
+  const encodedPath = encodeCoscinePath(path);
+
+  return fetchCoscine(
+    `/projects/${encodedProjectId}/resources/${encodedResourceId}/storage/${encodedPath}/content`,
+    apiToken,
+    { signal },
+  );
+}
+
+function isDirectoryPath(path) {
+  return String(path ?? '').endsWith('/');
+}
+
+function isInternalCoscinePath(path) {
+  const normalizedPath = String(path ?? '').replace(/^\/+/, '');
+  return normalizedPath === '.coscine' || normalizedPath.startsWith('.coscine/');
 }
 
 export async function uploadFileToCoscine({
